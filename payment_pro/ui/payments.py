@@ -132,7 +132,11 @@ class Payments(QWidget):
         return lbl
 
     def _load_accounts(self):
-        accounts = api_client.get_accounts()
+        try:
+            accounts = api_client.get_accounts()
+        except Exception as e:
+            self.sender_combo.addItem(str(e))
+            return
         for acc in accounts:
             self.sender_combo.addItem(
                 f"{acc['name']} — {acc['number'][-4:]} ({acc['currency']})",

@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 from api.client import api_client
+from auth.jwt_manager import jwt_manager
 from ui.styles import badge_style
 
 
@@ -75,7 +76,6 @@ class Dashboard(QWidget):
         self.layout_.setContentsMargins(28, 24, 28, 24)
         self.layout_.setSpacing(24)
 
-        # Stat cards row
         self.cards_row = QHBoxLayout()
         self.cards_row.setSpacing(16)
         self.layout_.addLayout(self.cards_row)
@@ -94,17 +94,49 @@ class Dashboard(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
 
-        btn_pay = QPushButton("Новый платёж")
-        btn_pay.setObjectName("btnNewPayment")
-        btn_pay.setMinimumHeight(44)
-        btn_pay.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_pay.clicked.connect(lambda: self.navigate.emit("payments"))
+        role = jwt_manager.get_role_key()
+        if role == "CLIENT":
+            btn_pay = QPushButton("Новый платёж")
+            btn_pay.setObjectName("btnNewPayment")
+            btn_pay.setMinimumHeight(44)
+            btn_pay.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_pay.clicked.connect(lambda: self.navigate.emit("payments"))
+            btn_row.addWidget(btn_pay)
 
-        btn_transfer = QPushButton("Перевод")
-        btn_transfer.setObjectName("btnTransfer")
-        btn_transfer.setMinimumHeight(44)
-        btn_transfer.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_transfer.clicked.connect(lambda: self.navigate.emit("payments"))
+            btn_transfer = QPushButton("Перевод")
+            btn_transfer.setObjectName("btnTransfer")
+            btn_transfer.setMinimumHeight(44)
+            btn_transfer.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_transfer.clicked.connect(lambda: self.navigate.emit("payments"))
+            btn_row.addWidget(btn_transfer)
+        elif role == "BANKER":
+            btn_queue = QPushButton("Очередь платежей")
+            btn_queue.setObjectName("btnNewPayment")
+            btn_queue.setMinimumHeight(44)
+            btn_queue.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_queue.clicked.connect(lambda: self.navigate.emit("queue"))
+            btn_row.addWidget(btn_queue)
+
+            btn_clients = QPushButton("Клиенты")
+            btn_clients.setObjectName("btnTransfer")
+            btn_clients.setMinimumHeight(44)
+            btn_clients.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_clients.clicked.connect(lambda: self.navigate.emit("clients"))
+            btn_row.addWidget(btn_clients)
+        elif role == "ADMIN":
+            btn_users = QPushButton("Пользователи")
+            btn_users.setObjectName("btnNewPayment")
+            btn_users.setMinimumHeight(44)
+            btn_users.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_users.clicked.connect(lambda: self.navigate.emit("users"))
+            btn_row.addWidget(btn_users)
+
+            btn_audit = QPushButton("Журнал аудита")
+            btn_audit.setObjectName("btnTransfer")
+            btn_audit.setMinimumHeight(44)
+            btn_audit.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_audit.clicked.connect(lambda: self.navigate.emit("audit"))
+            btn_row.addWidget(btn_audit)
 
         btn_hist = QPushButton("История")
         btn_hist.setObjectName("btnHistory")
@@ -112,8 +144,6 @@ class Dashboard(QWidget):
         btn_hist.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_hist.clicked.connect(lambda: self.navigate.emit("history"))
 
-        btn_row.addWidget(btn_pay)
-        btn_row.addWidget(btn_transfer)
         btn_row.addWidget(btn_hist)
         btn_row.addStretch()
         qa_layout.addLayout(btn_row)
@@ -155,7 +185,17 @@ class Dashboard(QWidget):
         self.layout_.addStretch()
 
     def _load_data(self):
-        stats = api_client.get_dashboard_stats()
+        try:
+            stats = api_client.get_dashboard_stats()
+        except Exception as e:
+            stats = {
+                "balance": 0, "balance_change": 0,
+                "transactions_count": 0, "transactions_change": 0,
+                "pending_count": 0, "pending_change": 0, "accounts_count": 0,
+            }
+            err_lbl = QLabel(str(e))
+            err_lbl.setStyleSheet("color: #EF4444; font-size: 13px;")
+            self.layout_.insertWidget(0, err_lbl)
 
         cards = [
             ("Баланс", f"₽ {stats['balance']:,.2f}", f"{abs(stats['balance_change'])}% за месяц",
@@ -172,7 +212,10 @@ class Dashboard(QWidget):
             card = StatCard(label, value, change, positive, icon, color)
             self.cards_row.addWidget(card)
 
-        transactions = api_client.get_recent_transactions()
+        try:
+            transactions = api_client.get_recent_transactions()
+        except Exception:
+            transactions = []
         self.table.setRowCount(len(transactions))
         for row, txn in enumerate(transactions):
             amount = txn["amount"]

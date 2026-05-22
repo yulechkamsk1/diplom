@@ -58,13 +58,13 @@ class LoginWindow(QWidget):
 
         layout.addSpacing(8)
 
-        # Username
-        lbl_user = QLabel("Логин")
+        # Email
+        lbl_user = QLabel("Email")
         lbl_user.setObjectName("fieldLabel")
         layout.addWidget(lbl_user)
 
         self.username_edit = QLineEdit()
-        self.username_edit.setPlaceholderText("Введите логин")
+        self.username_edit.setPlaceholderText("Введите email")
         self.username_edit.setMinimumHeight(44)
         layout.addWidget(self.username_edit)
 
@@ -117,7 +117,7 @@ class LoginWindow(QWidget):
         layout.addWidget(self.login_btn)
 
         layout.addSpacing(4)
-        hint = QLabel("Тестовый режим: любой логин и пароль")
+        hint = QLabel("Используйте email и пароль вашей учётной записи")
         hint.setStyleSheet("color: #94A3B8; font-size: 12px;")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
@@ -152,8 +152,7 @@ class LoginWindow(QWidget):
         self.login_btn.setText("Вход...")
 
         try:
-            result = api_client.login(username, password)
-            jwt_manager.set_token(result["access_token"])
+            api_client.login(username, password)
             self.login_success.emit()
         except Exception as e:
             self._set_error(str(e))

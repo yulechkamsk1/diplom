@@ -9,12 +9,25 @@ from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor
 from api.client import api_client
 from ui.styles import badge_style
+cv
+
+_SORT_KEYS = {
+    0: lambda t: int(t["id"]) if t["id"].isdigit() else 0,
+    1: lambda t: t["created_at"],
+    2: lambda t: t["recipient"].lower(),
+    3: lambda t: t["amount"],
+    4: lambda t: t["status"],
+}
+
+_COL_LABELS = ["ID", "Дата", "Получатель", "Сумма", "Статус", "Действия"]
 
 
 class History(QWidget):
     def __init__(self):
         super().__init__()
         self._all_transactions = []
+        self._sort_col = 1
+        self._sort_asc = False
         self._build_ui()
         self._load_data()
 
@@ -108,8 +121,10 @@ class History(QWidget):
 
         self.table = QTableWidget()
         self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["ID", "Дата", "Получатель", "Сумма", "Статус", "Действия"])
+        self.table.setHorizontalHeaderLabels(_COL_LABELS)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setCursor(Qt.CursorShape.PointingHandCursor)
+        self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -120,8 +135,33 @@ class History(QWidget):
         layout.addWidget(table_card)
 
     def _load_data(self):
-        self._all_transactions = api_client.get_transactions()
+        try:
+            self._all_transactions = api_client.get_transactions()
+        except Exception as e:
+            self._all_transactions = []
+            self.count_label.setText(str(e))
+            self.count_label.setStyleSheet("color: #EF4444;")
         self._render_table(self._all_transactions)
+
+    def _on_header_clicked(self, col: int):
+        if col not in _SORT_KEYS:
+            return
+        if self._sort_col == col:
+            self._sort_asc = not self._sort_asc
+        else:
+            self._sort_col = col
+            self._sort_asc = True
+        self._apply_filters()
+
+    def _update_header_labels(self):
+        for col, label in enumerate(_COL_LABELS):
+            if col == self._sort_col:
+                arrow = " ↑" if self._sort_asc else " ↓"
+                self.table.horizontalHeaderItem(col).setText(label + arrow)
+            else:
+                item = self.table.horizontalHeaderItem(col)
+                if item:
+                    item.setText(label)
 
     def _apply_filters(self):
         search = self.search_edit.text().strip().lower()
@@ -133,11 +173,18 @@ class History(QWidget):
         selected_status = self.status_combo.currentText()
         status_filter = status_map.get(selected_status)
 
+        date_from = self.date_from.date().toString("yyyy-MM-dd")
+        date_to = self.date_to.date().toString("yyyy-MM-dd")
+
         filtered = [
             t for t in self._all_transactions
             if (not search or search in t["recipient"].lower())
             and (status_filter is None or t["status"] == status_filter)
+            and (not t["created_at"] or t["created_at"][:10] >= date_from)
+            and (not t["created_at"] or t["created_at"][:10] <= date_to)
         ]
+        if self._sort_col in _SORT_KEYS:
+            filtered.sort(key=_SORT_KEYS[self._sort_col], reverse=not self._sort_asc)
         self._render_table(filtered)
 
     def _render_table(self, transactions: list):
@@ -181,6 +228,7 @@ class History(QWidget):
         self.table.resizeColumnToContents(1)
         self.table.resizeColumnToContents(4)
         self.table.resizeColumnToContents(5)
+        self._update_header_labels()
 
     def _show_detail(self, txn_id: str):
         txn = next((t for t in self._all_transactions if t["id"] == txn_id), None)

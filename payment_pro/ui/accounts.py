@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QFrame, QScrollArea, QSizePolicy, QPushButton,
+    QFrame, QScrollArea, QSizePolicy, QPushButton, QMessageBox,
 )
 from PyQt6.QtCore import Qt
 from api.client import api_client
@@ -13,6 +13,7 @@ CARD_COLORS = ["#3B82F6", "#10B981", "#8B5CF6", "#F59E0B"]
 class AccountCard(QFrame):
     def __init__(self, account: dict, color: str):
         super().__init__()
+        self._account = account
         self.setObjectName("accountCard")
         self.setMinimumHeight(160)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -63,7 +64,12 @@ class AccountCard(QFrame):
 
         # Actions
         btn_row = QHBoxLayout()
-        for label in ["Пополнить", "Перевести", "Реквизиты"]:
+        actions = [
+            ("Пополнить", self._on_deposit),
+            ("Перевести",  self._on_transfer),
+            ("Реквизиты",  self._on_details),
+        ]
+        for label, handler in actions:
             btn = QPushButton(label)
             btn.setStyleSheet(
                 f"QPushButton {{ border: 1px solid {color}44; border-radius: 6px; "
@@ -71,9 +77,35 @@ class AccountCard(QFrame):
                 f"QPushButton:hover {{ background: {color}22; }}"
             )
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(handler)
             btn_row.addWidget(btn)
         btn_row.addStretch()
         layout.addLayout(btn_row)
+
+
+    def _on_deposit(self):
+        QMessageBox.information(
+            self, "Пополнение счёта",
+            f"Для пополнения счёта {self._account['number']}\n"
+            "обратитесь в отделение банка или используйте интернет-банк.",
+        )
+
+    def _on_transfer(self):
+        QMessageBox.information(
+            self, "Перевод",
+            f"Счёт отправителя: {self._account['number']}\n\n"
+            "Для создания перевода воспользуйтесь разделом «Платежи».",
+        )
+
+    def _on_details(self):
+        acc = self._account
+        QMessageBox.information(
+            self, "Реквизиты счёта",
+            f"Наименование: {acc['name']}\n"
+            f"Номер счёта: {acc['number']}\n"
+            f"Валюта: {acc['currency']}\n"
+            f"Баланс: {acc['currency']} {acc['balance']:,.2f}",
+        )
 
 
 class Accounts(QWidget):
@@ -112,6 +144,7 @@ class Accounts(QWidget):
         add_btn.setObjectName("submitButton")
         add_btn.setMinimumHeight(38)
         add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.clicked.connect(self._on_open_account)
         summary_layout.addWidget(add_btn)
 
         self.layout_.addWidget(summary_frame)
@@ -121,8 +154,20 @@ class Accounts(QWidget):
         self.layout_.addLayout(self.cards_layout)
         self.layout_.addStretch()
 
+    def _on_open_account(self):
+        QMessageBox.information(
+            self, "Открытие счёта",
+            "Для открытия нового счёта обратитесь в отделение банка\n"
+            "или свяжитесь с вашим персональным менеджером.",
+        )
+
     def _load_data(self):
-        accounts = api_client.get_accounts()
+        try:
+            accounts = api_client.get_accounts()
+        except Exception as e:
+            self.summary_label.setText(str(e))
+            self.summary_label.setStyleSheet("color: #EF4444;")
+            return
         total_rub = sum(a["balance"] for a in accounts if a["currency"] == "RUB")
         self.summary_label.setText(
             f"{len(accounts)} счёта   |   Общий баланс (RUB): ₽ {total_rub:,.2f}"
