@@ -1,5 +1,4 @@
 import jwt
-from config import JWT_SECRET
 
 
 ROLE_LABELS = {

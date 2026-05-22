@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
-from api.client import api_client
+from api.client import api_client, _fmt_date
 
 
 class BankerClients(QWidget):
@@ -105,10 +105,13 @@ class BankerClients(QWidget):
 
     def _show_detail(self, client_id: int):
         try:
-            client = api_client.get_banker_client(client_id)
+            profile = api_client.get_banker_client(client_id)
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", str(e))
             return
+
+        client = profile.get("user", {})
+        payments = profile.get("payments", [])
 
         balance = client.get("balance", 0) / 100
         daily = client.get("daily_limit", 0) / 100
@@ -139,11 +142,6 @@ class BankerClients(QWidget):
             row_l.addWidget(val)
             layout.addWidget(row_w)
 
-        try:
-            payments = api_client.get_admin_client_history(client_id)
-        except Exception:
-            payments = []
-
         if payments:
             layout.addSpacing(8)
             layout.addWidget(QLabel("<b>Последние платежи:</b>"))
@@ -156,7 +154,7 @@ class BankerClients(QWidget):
             tbl.setRowCount(min(len(payments), 10))
             for i, p in enumerate(payments[:10]):
                 amount = p.get("amount", 0) / 100
-                tbl.setItem(i, 0, QTableWidgetItem(p.get("date", "—")))
+                tbl.setItem(i, 0, QTableWidgetItem(_fmt_date(p.get("created_at"))))
                 amt_item = QTableWidgetItem(f"₽ {amount:,.2f}")
                 amt_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 tbl.setItem(i, 1, amt_item)

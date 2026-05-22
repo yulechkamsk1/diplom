@@ -95,12 +95,13 @@ class ApiClient:
         if role == "BANKER":
             try:
                 s = self.get_banker_stats()
+                queue = self.get_banker_queue()
                 return {
                     "balance": 0.0,
                     "balance_change": 0.0,
                     "transactions_count": s.get("total", 0),
                     "transactions_change": 0.0,
-                    "pending_count": s.get("pending", 0),
+                    "pending_count": len(queue),
                     "pending_change": 0.0,
                     "accounts_count": s.get("approved", 0),
                 }
