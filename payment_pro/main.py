@@ -5,7 +5,7 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from PyQt6.QtWidgets import QApplication, QStackedWidget
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QGuiApplication
 from PyQt6.QtCore import Qt
 
 from ui.styles import MAIN_STYLE
@@ -27,7 +27,7 @@ class App(QApplication):
         self.root = QStackedWidget()
         self.root.setObjectName("centralWidget")
         self.root.setWindowTitle("PaymentPro — Платёжная система")
-        self.root.setMinimumSize(1100, 700)
+        self.root.setMinimumSize(900, 600)
         self.root.resize(1280, 800)
 
         self.login_win = LoginWindow()
@@ -56,6 +56,9 @@ class App(QApplication):
 
 
 def main():
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
     app = App(sys.argv)
     sys.exit(app.exec())
 

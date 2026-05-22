@@ -4,6 +4,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from api.client import api_client
+from ui.async_utils import run_async
+from ui.responsive import ResponsiveGrid
 
 
 CURRENCY_ICONS = {"RUB": "₽", "USD": "$", "EUR": "€"}
@@ -111,6 +113,7 @@ class AccountCard(QFrame):
 class Accounts(QWidget):
     def __init__(self):
         super().__init__()
+        self._load_worker = None
         self._build_ui()
         self._load_data()
 
@@ -149,9 +152,8 @@ class Accounts(QWidget):
 
         self.layout_.addWidget(summary_frame)
 
-        self.cards_layout = QVBoxLayout()
-        self.cards_layout.setSpacing(16)
-        self.layout_.addLayout(self.cards_layout)
+        self.cards_grid = ResponsiveGrid(min_item_width=320, max_columns=2)
+        self.layout_.addWidget(self.cards_grid)
         self.layout_.addStretch()
 
     def _on_open_account(self):
@@ -162,41 +164,29 @@ class Accounts(QWidget):
         )
 
     def _load_data(self):
-        try:
-            accounts = api_client.get_accounts()
-        except Exception as e:
-            self.summary_label.setText(str(e))
-            self.summary_label.setStyleSheet("color: #EF4444;")
-            return
+        self.summary_label.setText("Загрузка счетов...")
+        self._load_worker = run_async(
+            api_client.get_accounts,
+            on_success=self._render_accounts,
+            on_error=self._show_error,
+            on_finished=lambda: setattr(self, "_load_worker", None),
+        )
+
+    def _show_error(self, msg: str):
+        self.summary_label.setText(msg)
+        self.summary_label.setStyleSheet("color: #EF4444;")
+
+    def _render_accounts(self, accounts: list):
+        self.summary_label.setStyleSheet("")
         total_rub = sum(a["balance"] for a in accounts if a["currency"] == "RUB")
         self.summary_label.setText(
             f"{len(accounts)} счёта   |   Общий баланс (RUB): ₽ {total_rub:,.2f}"
         )
 
         # Clear existing cards
-        while self.cards_layout.count():
-            item = self.cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        # Two-column grid using rows of HBoxLayout
-        accounts_iter = iter(accounts)
+        self.cards_grid.clear()
         color_idx = 0
-        for pair in zip(accounts_iter, accounts_iter):
-            row = QHBoxLayout()
-            row.setSpacing(16)
-            for acc in pair:
-                card = AccountCard(acc, CARD_COLORS[color_idx % len(CARD_COLORS)])
-                row.addWidget(card)
-                color_idx += 1
-            self.cards_layout.addLayout(row)
-
-        # Odd one out
-        remaining = list(accounts_iter)
-        if remaining:
-            row = QHBoxLayout()
-            row.setSpacing(16)
-            card = AccountCard(remaining[0], CARD_COLORS[color_idx % len(CARD_COLORS)])
-            row.addWidget(card)
-            row.addStretch()
-            self.cards_layout.addLayout(row)
+        for acc in accounts:
+            card = AccountCard(acc, CARD_COLORS[color_idx % len(CARD_COLORS)])
+            self.cards_grid.add_card(card)
+            color_idx += 1

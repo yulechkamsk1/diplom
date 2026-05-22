@@ -3,11 +3,13 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from api.client import api_client
+from ui.async_utils import run_async
 
 
 class Settings(QWidget):
     def __init__(self):
         super().__init__()
+        self._load_worker = None
         self._build_ui()
         self._load_data()
 
@@ -29,7 +31,8 @@ class Settings(QWidget):
 
         card = QFrame()
         card.setObjectName("sectionCard")
-        card.setMaximumWidth(580)
+        card.setMinimumWidth(300)
+        card.setMaximumWidth(640)
 
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(28, 24, 28, 24)
@@ -48,11 +51,25 @@ class Settings(QWidget):
         layout.addStretch()
 
     def _load_data(self):
-        try:
-            me = api_client.get_me()
-        except Exception as e:
-            self._add_row("Ошибка загрузки", str(e), error=True)
-            return
+        self._add_row("Профиль", "Загрузка...")
+        self._load_worker = run_async(
+            api_client.get_me,
+            on_success=self._render_profile,
+            on_error=lambda msg: self._add_row("Ошибка загрузки", msg, error=True),
+            on_finished=lambda: setattr(self, "_load_worker", None),
+        )
+
+    def _render_profile(self, me: dict):
+        while self.rows_layout.count():
+            item = self.rows_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+            elif item.layout():
+                while item.layout().count():
+                    nested = item.layout().takeAt(0)
+                    if nested.widget():
+                        nested.widget().deleteLater()
 
         role_labels = {"CLIENT": "Клиент", "BANKER": "Банкир", "ADMIN": "Администратор"}
         balance = me.get("balance", 0) / 100
@@ -79,7 +96,8 @@ class Settings(QWidget):
 
         lbl = QLabel(label)
         lbl.setObjectName("fieldLabel")
-        lbl.setFixedWidth(180)
+        lbl.setMinimumWidth(130)
+        lbl.setMaximumWidth(180)
 
         val = QLabel(value)
         if error:

@@ -4,11 +4,14 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from api.client import api_client
+from ui.async_utils import run_async
+from ui.responsive import ResponsiveGrid
 
 
 class Analytics(QWidget):
     def __init__(self):
         super().__init__()
+        self._load_worker = None
         self._build_ui()
         self._load_data()
 
@@ -28,9 +31,8 @@ class Analytics(QWidget):
         self.layout_.setContentsMargins(28, 24, 28, 24)
         self.layout_.setSpacing(24)
 
-        self.cards_row = QHBoxLayout()
-        self.cards_row.setSpacing(16)
-        self.layout_.addLayout(self.cards_row)
+        self.cards_grid = ResponsiveGrid(min_item_width=230, max_columns=4)
+        self.layout_.addWidget(self.cards_grid)
 
         breakdown_frame = QFrame()
         breakdown_frame.setObjectName("sectionCard")
@@ -50,11 +52,17 @@ class Analytics(QWidget):
         self.layout_.addStretch()
 
     def _load_data(self):
-        try:
-            payments = api_client.get_transactions()
-        except Exception:
-            payments = []
+        self.cards_grid.clear()
+        self.cards_grid.add_card(self._stat_card("Загрузка", "…", "получаем данные", "#64748B"))
+        self._load_worker = run_async(
+            api_client.get_transactions,
+            on_success=self._render_data,
+            on_error=lambda _: self._render_data([]),
+            on_finished=lambda: setattr(self, "_load_worker", None),
+        )
 
+    def _render_data(self, payments: list):
+        self.cards_grid.clear()
         sent_total = sum(abs(p["amount"]) for p in payments if p["amount"] < 0)
         recv_total = sum(p["amount"] for p in payments if p["amount"] > 0)
         sent_count = sum(1 for p in payments if p["amount"] < 0)
@@ -69,7 +77,13 @@ class Analytics(QWidget):
             ("Отклонено",     str(failed),              "платежей",               "#6B7280"),
         ]
         for label, value, sub, color in cards:
-            self.cards_row.addWidget(self._stat_card(label, value, sub, color))
+            self.cards_grid.add_card(self._stat_card(label, value, sub, color))
+
+        while self.breakdown_layout.count():
+            item = self.breakdown_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
 
         total = len(payments) or 1
         statuses = [

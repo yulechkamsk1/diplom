@@ -5,6 +5,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from datetime import datetime
 from api.client import api_client
+from ui.async_utils import run_async
+from ui.responsive import configure_table
 
 
 def _fmt_dt(iso: str | None) -> str:
@@ -21,6 +23,7 @@ class AdminAudit(QWidget):
     def __init__(self):
         super().__init__()
         self._entries = []
+        self._load_worker = None
         self._build_ui()
         self._load_data()
 
@@ -58,17 +61,22 @@ class AdminAudit(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
-        self.table.setMinimumHeight(300)
+        configure_table(self.table, stretch_columns=(1,), min_height=300)
         card_layout.addWidget(self.table)
 
         layout.addWidget(card)
 
     def _load_data(self):
-        try:
-            self._entries = api_client.get_admin_audit()
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка", str(e))
-            return
+        self.count_label.setText("Журнал аудита (загрузка...)")
+        self._load_worker = run_async(
+            api_client.get_admin_audit,
+            on_success=self._on_audit_loaded,
+            on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
+            on_finished=lambda: setattr(self, "_load_worker", None),
+        )
+
+    def _on_audit_loaded(self, entries: list):
+        self._entries = entries
         self._render()
 
     def _render(self):

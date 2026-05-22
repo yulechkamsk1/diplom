@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
+from typing import Callable
 
 from auth.jwt_manager import jwt_manager
 from ui.dashboard import Dashboard
@@ -16,6 +17,7 @@ from ui.banker_queue import BankerQueue
 from ui.banker_clients import BankerClients
 from ui.admin_users import AdminUsers
 from ui.admin_audit import AdminAudit
+from ui.admin_stats import AdminStats
 
 
 NAV_CLIENT = [
@@ -38,6 +40,7 @@ NAV_BANKER = [
 
 NAV_ADMIN = [
     ("dashboard", "Главная"),
+    ("stats",     "Статистика"),
     ("users",     "Пользователи"),
     ("audit",     "Аудит"),
     ("settings",  "Настройки"),
@@ -47,12 +50,13 @@ PAGE_META = {
     "dashboard": ("Панель управления",    "Обзор финансовой активности"),
     "payments":  ("Платежи",              "Создание платёжного поручения"),
     "queue":     ("Очередь платежей",     "Проверка и одобрение платежей"),
-    "clients":   ("Клиенты",              "Список закреплённых клиентов"),
+    "clients":   ("Клиенты",              "Поиск и карточки клиентов"),
     "history":   ("История транзакций",   "Просмотр и фильтрация операций"),
     "accounts":  ("Счета",                "Управление банковскими счетами"),
     "analytics": ("Аналитика",            "Финансовая статистика"),
     "settings":  ("Настройки",            "Профиль и параметры"),
     "users":     ("Пользователи",         "Управление учётными записями"),
+    "stats":     ("Статистика",           "Решения банкиров и статусы платежей"),
     "audit":     ("Журнал аудита",        "История действий в системе"),
 }
 
@@ -62,6 +66,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._on_logout = on_logout
         self._nav_buttons: dict[str, QPushButton] = {}
+        self._pages: dict[str, QWidget] = {}
+        self._page_factories: dict[str, Callable[[], QWidget]] = {}
 
         role = jwt_manager.get_role_key()
         if role == "BANKER":
@@ -72,7 +78,7 @@ class MainWindow(QMainWindow):
             self._nav_items = NAV_CLIENT
 
         self.setWindowTitle("PaymentPro — Платёжная система")
-        self.setMinimumSize(1100, 700)
+        self.setMinimumSize(900, 600)
         self._build_ui()
         self._navigate("dashboard")
 
@@ -99,26 +105,24 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.stack.setObjectName("contentStack")
-        self._pages: dict[str, QWidget] = {}
-
-        # Common pages
-        dash = Dashboard()
-        dash.navigate.connect(self._navigate)
-        self._add_page("dashboard", dash)
-        self._add_page("history", History())
-        self._add_page("analytics", Analytics())
-        self._add_page("settings", Settings())
+        # Pages are created lazily. This keeps login fast and avoids loading
+        # heavy tables until the user opens the relevant section.
+        self._register_page("dashboard", self._build_dashboard)
+        self._register_page("history", History)
+        self._register_page("analytics", Analytics)
+        self._register_page("settings", Settings)
 
         # Role-specific pages
         if role == "BANKER":
-            self._add_page("queue", BankerQueue())
-            self._add_page("clients", BankerClients())
+            self._register_page("queue", BankerQueue)
+            self._register_page("clients", BankerClients)
         elif role == "ADMIN":
-            self._add_page("users", AdminUsers())
-            self._add_page("audit", AdminAudit())
+            self._register_page("stats", AdminStats)
+            self._register_page("users", AdminUsers)
+            self._register_page("audit", AdminAudit)
         else:
-            self._add_page("payments", Payments())
-            self._add_page("accounts", Accounts())
+            self._register_page("payments", Payments)
+            self._register_page("accounts", Accounts)
 
         right_layout.addWidget(self.stack, stretch=1)
         root.addWidget(right, stretch=1)
@@ -128,14 +132,17 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(220)
+        sidebar.setMinimumWidth(180)
+        sidebar.setMaximumWidth(220)
+        sidebar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         logo_area = QWidget()
-        logo_area.setFixedHeight(80)
+        logo_area.setMinimumHeight(72)
+        logo_area.setMaximumHeight(84)
         logo_layout = QHBoxLayout(logo_area)
         logo_layout.setContentsMargins(20, 16, 20, 16)
         logo_layout.setSpacing(12)
@@ -191,7 +198,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(bottom_div)
 
         logout_widget = QWidget()
-        logout_widget.setFixedHeight(60)
+        logout_widget.setMinimumHeight(56)
+        logout_widget.setMaximumHeight(66)
         logout_layout = QHBoxLayout(logout_widget)
         logout_layout.setContentsMargins(12, 8, 12, 8)
 
@@ -210,7 +218,8 @@ class MainWindow(QMainWindow):
     def _build_header(self) -> QWidget:
         header = QWidget()
         header.setObjectName("header")
-        header.setFixedHeight(70)
+        header.setMinimumHeight(70)
+        header.setMaximumHeight(88)
 
         layout = QHBoxLayout(header)
         layout.setContentsMargins(28, 0, 24, 0)
@@ -220,6 +229,7 @@ class MainWindow(QMainWindow):
         self.page_title.setObjectName("pageTitle")
         self.page_subtitle = QLabel("Обзор финансовой активности")
         self.page_subtitle.setObjectName("pageSubtitle")
+        self.page_subtitle.setWordWrap(True)
 
         title_col = QVBoxLayout()
         title_col.setSpacing(2)
@@ -231,6 +241,7 @@ class MainWindow(QMainWindow):
         notif_btn = QPushButton("Уведомления")
         notif_btn.setObjectName("notifButton")
         notif_btn.setFixedHeight(36)
+        notif_btn.setMaximumWidth(150)
         notif_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(notif_btn)
 
@@ -247,6 +258,7 @@ class MainWindow(QMainWindow):
         user_col.setSpacing(1)
         user_name_lbl = QLabel(username)
         user_name_lbl.setObjectName("userName")
+        user_name_lbl.setMaximumWidth(180)
         user_role_lbl = QLabel(role)
         user_role_lbl.setObjectName("userRole")
         user_col.addWidget(user_name_lbl)
@@ -263,8 +275,27 @@ class MainWindow(QMainWindow):
         self._pages[page_id] = widget
         self.stack.addWidget(widget)
 
+    def _register_page(self, page_id: str, factory: Callable[[], QWidget]):
+        self._page_factories[page_id] = factory
+
+    def _build_dashboard(self) -> QWidget:
+        dash = Dashboard()
+        dash.navigate.connect(self._navigate)
+        return dash
+
+    def _get_or_create_page(self, page_id: str) -> QWidget | None:
+        if page_id in self._pages:
+            return self._pages[page_id]
+        factory = self._page_factories.get(page_id)
+        if not factory:
+            return None
+        widget = factory()
+        self._add_page(page_id, widget)
+        return widget
+
     def _navigate(self, page_id: str):
-        if page_id not in self._pages:
+        widget = self._get_or_create_page(page_id)
+        if widget is None:
             return
 
         for pid, btn in self._nav_buttons.items():
@@ -276,7 +307,7 @@ class MainWindow(QMainWindow):
         self.page_title.setText(title)
         self.page_subtitle.setText(subtitle)
 
-        self.stack.setCurrentWidget(self._pages[page_id])
+        self.stack.setCurrentWidget(widget)
 
     def _logout(self):
         jwt_manager.clear()

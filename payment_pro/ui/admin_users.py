@@ -1,18 +1,116 @@
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+    QLineEdit, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
+    QDoubleSpinBox, QTabWidget,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
-from api.client import api_client
+from api.client import api_client, user_id_to_account_number
+from ui.async_utils import run_async
+from ui.responsive import configure_table
 
 ROLE_LABELS = {"CLIENT": "Клиент", "BANKER": "Банкир", "ADMIN": "Администратор"}
+
+
+def _rub(kopecks: int | float | None) -> str:
+    return f"₽ {(kopecks or 0) / 100:,.2f}"
+
+
+def _fmt_dt(iso: str | None) -> str:
+    if not iso:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return dt.strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        return iso[:16]
+
+
+class CreateUserDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Новый пользователь")
+        self.setMinimumWidth(440)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self.email_edit = QLineEdit()
+        self.email_edit.setPlaceholderText("user@test.ru")
+        self.password_edit = QLineEdit()
+        self.password_edit.setPlaceholderText("Пароль")
+        self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("ФИО")
+        self.phone_edit = QLineEdit()
+        self.phone_edit.setPlaceholderText("+79990000000")
+
+        self.role_combo = QComboBox()
+        for key, label in ROLE_LABELS.items():
+            self.role_combo.addItem(label, key)
+
+        self.balance_spin = QDoubleSpinBox()
+        self.balance_spin.setRange(0, 1_000_000_000)
+        self.balance_spin.setDecimals(2)
+        self.balance_spin.setSingleStep(1000)
+        self.balance_spin.setPrefix("₽ ")
+
+        form.addRow("Email *", self.email_edit)
+        form.addRow("Пароль *", self.password_edit)
+        form.addRow("ФИО *", self.name_edit)
+        form.addRow("Телефон", self.phone_edit)
+        form.addRow("Роль *", self.role_combo)
+        form.addRow("Баланс", self.balance_spin)
+        layout.addLayout(form)
+
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        self.buttons.accepted.connect(self._validate_and_accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+
+    def payload(self) -> dict:
+        payload = {
+            "email": self.email_edit.text().strip(),
+            "password": self.password_edit.text(),
+            "full_name": self.name_edit.text().strip(),
+            "role": self.role_combo.currentData(),
+            "balance": int(round(self.balance_spin.value() * 100)),
+        }
+        phone = self.phone_edit.text().strip()
+        if phone:
+            payload["phone"] = phone
+        return payload
+
+    def _validate_and_accept(self):
+        if not self.email_edit.text().strip():
+            QMessageBox.warning(self, "Проверка", "Укажите email.")
+            return
+        if not self.password_edit.text():
+            QMessageBox.warning(self, "Проверка", "Укажите пароль.")
+            return
+        if not self.name_edit.text().strip():
+            QMessageBox.warning(self, "Проверка", "Укажите ФИО.")
+            return
+        self.accept()
 
 
 class AdminUsers(QWidget):
     def __init__(self):
         super().__init__()
         self._users = []
+        self._load_worker = None
+        self._action_worker = None
+        self._load_seq = 0
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(350)
+        self._search_timer.timeout.connect(self._load_data)
         self._build_ui()
         self._load_data()
 
@@ -25,6 +123,12 @@ class AdminUsers(QWidget):
         self.count_label = QLabel("Пользователи")
         self.count_label.setObjectName("sectionTitle")
 
+        create_btn = QPushButton("Создать")
+        create_btn.setObjectName("exportButton")
+        create_btn.setMinimumHeight(38)
+        create_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        create_btn.clicked.connect(self._create_user)
+
         refresh_btn = QPushButton("Обновить")
         refresh_btn.setObjectName("filterButton")
         refresh_btn.setMinimumHeight(38)
@@ -33,8 +137,32 @@ class AdminUsers(QWidget):
 
         hdr.addWidget(self.count_label)
         hdr.addStretch()
+        hdr.addWidget(create_btn)
         hdr.addWidget(refresh_btn)
         layout.addLayout(hdr)
+
+        filters = QFrame()
+        filters.setObjectName("sectionCard")
+        filters_layout = QHBoxLayout(filters)
+        filters_layout.setContentsMargins(20, 16, 20, 16)
+        filters_layout.setSpacing(12)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Поиск по ID, ФИО, email или телефону")
+        self.search_edit.setMinimumHeight(38)
+        self.search_edit.returnPressed.connect(self._load_data)
+        self.search_edit.textChanged.connect(lambda _: self._schedule_load())
+
+        self.role_filter = QComboBox()
+        self.role_filter.setMinimumHeight(38)
+        self.role_filter.addItem("Все роли", "")
+        for key, label in ROLE_LABELS.items():
+            self.role_filter.addItem(label, key)
+        self.role_filter.currentIndexChanged.connect(lambda _: self._schedule_load())
+
+        filters_layout.addWidget(self.search_edit, stretch=1)
+        filters_layout.addWidget(self.role_filter)
+        layout.addWidget(filters)
 
         card = QFrame()
         card.setObjectName("sectionCard")
@@ -42,60 +170,90 @@ class AdminUsers(QWidget):
         card_layout.setContentsMargins(20, 16, 20, 16)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(8)
+        self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels(
-            ["ID", "ФИО", "Email", "Роль", "Баланс", "Лимит/день", "Статус", "Действия"]
+            ["ID", "Счёт", "ФИО", "Email", "Роль", "Баланс", "Лимит/день", "Статус", "История", "Действия"]
         )
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
-        self.table.setMinimumHeight(300)
+        configure_table(self.table, stretch_columns=(2, 3), min_height=300)
         card_layout.addWidget(self.table)
 
         layout.addWidget(card)
 
     def _load_data(self):
-        try:
-            self._users = api_client.get_admin_users()
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка", str(e))
+        self._load_seq += 1
+        seq = self._load_seq
+        q = self.search_edit.text().strip()
+        role = self.role_filter.currentData() or ""
+        self.count_label.setText("Пользователи (загрузка...)")
+        self._load_worker = run_async(
+            lambda: api_client.get_admin_users(q=q, role=role),
+            on_success=lambda users, s=seq: self._on_users_loaded(s, users),
+            on_error=lambda msg, s=seq: self._on_load_error(s, msg),
+            on_finished=lambda: setattr(self, "_load_worker", None),
+        )
+
+    def _schedule_load(self):
+        self._search_timer.start()
+
+    def _on_users_loaded(self, seq: int, users: list):
+        if seq != self._load_seq:
             return
+        self._users = users
         self._render()
+
+    def _on_load_error(self, seq: int, msg: str):
+        if seq != self._load_seq:
+            return
+        QMessageBox.critical(self, "Ошибка", msg)
 
     def _render(self):
         self.count_label.setText(f"Пользователи ({len(self._users)})")
         self.table.setRowCount(len(self._users))
 
         for row, u in enumerate(self._users):
-            balance = u.get("balance", 0) / 100
-            daily = u.get("daily_limit", 0) / 100
             is_blocked = u.get("is_blocked", False)
             role_raw = u.get("role", "")
+            user_id = u.get("id", "")
 
             items = [
-                QTableWidgetItem(str(u.get("id", ""))),
+                QTableWidgetItem(str(user_id)),
+                QTableWidgetItem(user_id_to_account_number(user_id) if user_id != "" else "—"),
                 QTableWidgetItem(u.get("full_name", "—")),
                 QTableWidgetItem(u.get("email", "—")),
                 QTableWidgetItem(ROLE_LABELS.get(role_raw, role_raw or "—")),
-                QTableWidgetItem(f"₽ {balance:,.2f}"),
-                QTableWidgetItem(f"₽ {daily:,.2f}"),
+                QTableWidgetItem(_rub(u.get("balance", 0))),
+                QTableWidgetItem(_rub(u.get("daily_limit", 0))),
                 QTableWidgetItem("Заблокирован" if is_blocked else "Активен"),
             ]
-            items[4].setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             items[5].setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            items[6].setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            items[6].setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            items[7].setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             if is_blocked:
-                items[6].setForeground(QColor("#EF4444"))
+                items[7].setForeground(QColor("#EF4444"))
 
             for col, item in enumerate(items):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(row, col, item)
 
-            user_id = u.get("id")
+            hist_btn = QPushButton("Открыть")
+            hist_btn.setEnabled(role_raw in {"CLIENT", "BANKER"})
+            hist_btn.setStyleSheet(
+                "QPushButton { border: 1px solid #E2E8F0; border-radius: 6px; "
+                "padding: 4px 10px; font-size: 12px; color: #3B82F6; background: #EFF6FF; }"
+                "QPushButton:hover { background: #DBEAFE; }"
+                "QPushButton:disabled { color: #94A3B8; background: #F8FAFC; }"
+            )
+            hist_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            hist_btn.clicked.connect(lambda _, uid=user_id, role=role_raw: self._show_history(uid, role))
+            self.table.setCellWidget(row, 8, hist_btn)
+
             action_btn = QPushButton("Разблокировать" if is_blocked else "Заблокировать")
             action_btn.setStyleSheet(
                 "QPushButton { border-radius: 6px; padding: 4px 10px; font-size: 12px; "
@@ -109,11 +267,27 @@ class AdminUsers(QWidget):
             action_btn.clicked.connect(
                 lambda _, uid=user_id, blocked=is_blocked: self._toggle_block(uid, blocked)
             )
-            self.table.setCellWidget(row, 7, action_btn)
+            self.table.setCellWidget(row, 9, action_btn)
             self.table.setRowHeight(row, 48)
 
-        for col in [0, 3, 5, 6, 7]:
+        for col in [0, 1, 4, 6, 7, 8, 9]:
             self.table.resizeColumnToContents(col)
+
+    def _create_user(self):
+        dlg = CreateUserDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            payload = dlg.payload()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", str(e))
+            return
+        self._action_worker = run_async(
+            lambda: api_client.create_admin_user(payload),
+            on_success=lambda _: (QMessageBox.information(self, "Готово", "Пользователь создан."), self._load_data()),
+            on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
+            on_finished=lambda: setattr(self, "_action_worker", None),
+        )
 
     def _toggle_block(self, user_id: int, is_blocked: bool):
         action = "разблокировать" if is_blocked else "заблокировать"
@@ -124,11 +298,161 @@ class AdminUsers(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        try:
-            if is_blocked:
-                api_client.unblock_user(user_id)
-            else:
-                api_client.block_user(user_id)
-            self._load_data()
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка", str(e))
+        action_fn = api_client.unblock_user if is_blocked else api_client.block_user
+        self._action_worker = run_async(
+            lambda: action_fn(user_id),
+            on_success=lambda _: self._load_data(),
+            on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
+            on_finished=lambda: setattr(self, "_action_worker", None),
+        )
+
+    def _show_history(self, user_id: int, role: str):
+        if role == "CLIENT":
+            self._action_worker = run_async(
+                lambda: api_client.get_admin_client_history(user_id),
+                on_success=lambda data: self._show_client_history(data, user_id),
+                on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
+                on_finished=lambda: setattr(self, "_action_worker", None),
+            )
+        elif role == "BANKER":
+            self._action_worker = run_async(
+                lambda: api_client.get_admin_banker_history(user_id),
+                on_success=lambda payments: self._show_banker_history(payments, user_id),
+                on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
+                on_finished=lambda: setattr(self, "_action_worker", None),
+            )
+
+    def _show_banker_history(self, payments: list, banker_id: int):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"История банкира #{banker_id}")
+        dlg.resize(900, 520)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(self._payments_table(payments))
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+        dlg.exec()
+
+    def _show_client_history(self, data: dict, client_id: int):
+        profile = data.get("profile", {})
+        user = profile.get("user", {})
+        stats = profile.get("stats", {})
+        payments = profile.get("payments", [])
+        audit = data.get("audit", [])
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"История клиента #{client_id}")
+        dlg.resize(940, 620)
+        layout = QVBoxLayout(dlg)
+
+        tabs = QTabWidget()
+        tabs.addTab(self._client_profile_tab(user, stats), "Профиль")
+        tabs.addTab(self._payments_table(payments), "Платежи")
+        tabs.addTab(self._audit_table(audit), "Аудит")
+        layout.addWidget(tabs)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+        dlg.exec()
+
+    def _client_profile_tab(self, user: dict, stats: dict) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        user_id = user.get("id", "")
+        lines = [
+            ("ID", user_id or "—"),
+            ("Счёт", user_id_to_account_number(user_id) if user_id != "" else "—"),
+            ("ФИО", user.get("full_name", "—")),
+            ("Email", user.get("email", "—")),
+            ("Телефон", user.get("phone") or "—"),
+            ("Баланс", _rub(user.get("balance", 0))),
+            ("Дневной лимит", _rub(user.get("daily_limit", 0))),
+            ("Месячный лимит", _rub(user.get("monthly_limit", 0))),
+            ("Статус", "Заблокирован" if user.get("is_blocked") else "Активен"),
+            ("Отправлено платежей", stats.get("sent_count", 0)),
+            ("Получено платежей", stats.get("received_count", 0)),
+            ("Сумма отправленных", _rub(stats.get("sent_amount", 0))),
+            ("Сумма полученных", _rub(stats.get("received_amount", 0))),
+            ("В ожидании", stats.get("pending_payments", 0)),
+            ("Одобрено", stats.get("approved_payments", 0)),
+            ("Отклонено", stats.get("rejected_payments", 0)),
+        ]
+        for label, value in lines:
+            layout.addWidget(self._info_row(label, str(value)))
+        layout.addStretch()
+        return tab
+
+    def _payments_table(self, payments: list) -> QTableWidget:
+        tbl = QTableWidget()
+        tbl.setColumnCount(8)
+        tbl.setHorizontalHeaderLabels(["ID", "Дата", "Отправитель", "Получатель", "Сумма", "Статус", "Fraud", "Обработан"])
+        tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        tbl.setAlternatingRowColors(True)
+        tbl.setShowGrid(False)
+        configure_table(tbl, stretch_columns=(1,), min_height=320)
+        tbl.setRowCount(len(payments))
+        for row, p in enumerate(payments):
+            items = [
+                QTableWidgetItem(str(p.get("id", ""))),
+                QTableWidgetItem(_fmt_dt(p.get("created_at"))),
+                QTableWidgetItem(str(p.get("sender_id", "—"))),
+                QTableWidgetItem(str(p.get("recipient_id", "—"))),
+                QTableWidgetItem(_rub(p.get("amount", 0))),
+                QTableWidgetItem(p.get("status", "—")),
+                QTableWidgetItem(str(p.get("fraud_score", 0))),
+                QTableWidgetItem(_fmt_dt(p.get("processed_at"))),
+            ]
+            items[4].setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            items[6].setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            for col, item in enumerate(items):
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(row, col, item)
+            tbl.setRowHeight(row, 42)
+        for col in [0, 2, 3, 4, 5, 6, 7]:
+            tbl.resizeColumnToContents(col)
+        return tbl
+
+    def _audit_table(self, audit: list) -> QTableWidget:
+        tbl = QTableWidget()
+        tbl.setColumnCount(5)
+        tbl.setHorizontalHeaderLabels(["ID", "Действие", "Объект", "Детали", "Дата"])
+        tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        tbl.setAlternatingRowColors(True)
+        tbl.setShowGrid(False)
+        configure_table(tbl, stretch_columns=(3,), min_height=320)
+        tbl.setRowCount(len(audit))
+        for row, e in enumerate(audit):
+            items = [
+                QTableWidgetItem(str(e.get("id", ""))),
+                QTableWidgetItem(e.get("action", "—")),
+                QTableWidgetItem(f"{e.get('entity_type', '—')} #{e.get('entity_id', '—')}"),
+                QTableWidgetItem(e.get("details", "—")),
+                QTableWidgetItem(_fmt_dt(e.get("created_at"))),
+            ]
+            for col, item in enumerate(items):
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(row, col, item)
+            tbl.setRowHeight(row, 42)
+        for col in [0, 1, 2, 4]:
+            tbl.resizeColumnToContents(col)
+        return tbl
+
+    def _info_row(self, label: str, value: str) -> QWidget:
+        row_w = QWidget()
+        row_l = QHBoxLayout(row_w)
+        row_l.setContentsMargins(0, 2, 0, 2)
+        lbl = QLabel(f"<b>{label}:</b>")
+        lbl.setFixedWidth(180)
+        val = QLabel(value)
+        val.setWordWrap(True)
+        row_l.addWidget(lbl)
+        row_l.addWidget(val, stretch=1)
+        return row_w

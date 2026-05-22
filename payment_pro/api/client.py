@@ -1,8 +1,13 @@
 import requests
 from requests.exceptions import ConnectionError, Timeout, RequestException
 from datetime import datetime
+from time import sleep
+from threading import RLock
 from config import API_URL, REQUEST_TIMEOUT
 from auth.jwt_manager import jwt_manager
+
+ACCOUNT_PREFIX = "4070281"
+ACCOUNT_USER_ID_WIDTH = 13
 
 
 def _wrap_network_error(exc: Exception) -> RuntimeError:
@@ -13,6 +18,37 @@ def _wrap_network_error(exc: Exception) -> RuntimeError:
     if isinstance(exc, RequestException):
         return RuntimeError(f"Ошибка соединения: {exc}")
     return RuntimeError(str(exc))
+
+
+def account_number_to_user_id(account_number: str) -> int:
+    account = str(account_number).strip()
+    if len(account) != len(ACCOUNT_PREFIX) + ACCOUNT_USER_ID_WIDTH or not account.isdigit():
+        raise ValueError("Номер счёта должен содержать 20 цифр")
+    if not account.startswith(ACCOUNT_PREFIX):
+        raise ValueError(f"Номер счёта должен начинаться с {ACCOUNT_PREFIX}")
+
+    user_id = int(account[len(ACCOUNT_PREFIX):])
+    if user_id <= 0:
+        raise ValueError("В номере счёта указан некорректный получатель")
+    return user_id
+
+
+def user_id_to_account_number(user_id: int | str) -> str:
+    return f"{ACCOUNT_PREFIX}{str(user_id).zfill(ACCOUNT_USER_ID_WIDTH)}"
+
+
+def _read_api_error(resp) -> str:
+    try:
+        return resp.json().get("error", resp.text)
+    except Exception:
+        return resp.text
+
+
+def _translate_api_error(message: str) -> str:
+    lower = message.lower()
+    if "payments_recipient_id_fkey" in lower or "sqlstate 23503" in lower:
+        return "Получатель с таким счётом не найден. Проверьте номер счёта получателя."
+    return message
 
 
 STATUS_MAP = {
@@ -35,46 +71,61 @@ def _fmt_date(iso: str | None) -> str:
 
 
 class ApiClient:
+    def __init__(self):
+        self._session = requests.Session()
+        self._lock = RLock()
+        self._cache: dict[tuple, object] = {}
+
     def _headers(self) -> dict:
         return {"Content-Type": "application/json", **jwt_manager.get_header()}
 
-    def _get(self, path: str) -> dict | list:
+    def clear_cache(self) -> None:
+        self._cache.clear()
+
+    def _cache_get(self, key: tuple):
+        return self._cache.get(key)
+
+    def _cache_set(self, key: tuple, value: object):
+        self._cache[key] = value
+        return value
+
+    def _get(self, path: str, params: dict | None = None) -> dict | list:
         try:
-            resp = requests.get(f"{API_URL}{path}", headers=self._headers(), timeout=REQUEST_TIMEOUT)
+            with self._lock:
+                resp = self._session.get(
+                    f"{API_URL}{path}",
+                    headers=self._headers(),
+                    params=params,
+                    timeout=REQUEST_TIMEOUT,
+                )
         except (Timeout, ConnectionError, RequestException) as e:
             raise _wrap_network_error(e)
         if not resp.ok:
-            try:
-                err = resp.json().get("error", resp.text)
-            except Exception:
-                err = resp.text
-            raise RuntimeError(err)
+            raise RuntimeError(_translate_api_error(_read_api_error(resp)))
         return resp.json()
 
     def _put(self, path: str, data: dict) -> dict:
         try:
-            resp = requests.put(f"{API_URL}{path}", json=data, headers=self._headers(), timeout=REQUEST_TIMEOUT)
+            with self._lock:
+                resp = self._session.put(
+                    f"{API_URL}{path}", json=data, headers=self._headers(), timeout=REQUEST_TIMEOUT
+                )
         except (Timeout, ConnectionError, RequestException) as e:
             raise _wrap_network_error(e)
         if not resp.ok:
-            try:
-                err = resp.json().get("error", resp.text)
-            except Exception:
-                err = resp.text
-            raise RuntimeError(err)
+            raise RuntimeError(_translate_api_error(_read_api_error(resp)))
         return resp.json()
 
     def _post(self, path: str, data: dict) -> dict:
         try:
-            resp = requests.post(f"{API_URL}{path}", json=data, headers=self._headers(), timeout=REQUEST_TIMEOUT)
+            with self._lock:
+                resp = self._session.post(
+                    f"{API_URL}{path}", json=data, headers=self._headers(), timeout=REQUEST_TIMEOUT
+                )
         except (Timeout, ConnectionError, RequestException) as e:
             raise _wrap_network_error(e)
         if not resp.ok:
-            try:
-                err = resp.json().get("error", resp.text)
-            except Exception:
-                err = resp.text
-            raise RuntimeError(err)
+            raise RuntimeError(_translate_api_error(_read_api_error(resp)))
         return resp.json()
 
     # --- Auth ---
@@ -83,10 +134,15 @@ class ApiClient:
         resp = self._post("/api/auth/login", {"email": username, "password": password})
         jwt_manager.set_token(resp["token"])
         jwt_manager.set_user(resp.get("user", {}))
+        self.clear_cache()
         return {"access_token": resp["token"]}
 
     def get_me(self) -> dict:
-        return self._get("/api/auth/me")
+        key = ("me", jwt_manager.get_token())
+        cached = self._cache_get(key)
+        if cached:
+            return cached
+        return self._cache_set(key, self._get("/api/auth/me"))
 
     # --- Dashboard ---
 
@@ -97,27 +153,26 @@ class ApiClient:
                 s = self.get_banker_stats()
                 queue = self.get_banker_queue()
                 return {
-                    "balance": 0.0,
-                    "balance_change": 0.0,
-                    "transactions_count": s.get("total", 0),
-                    "transactions_change": 0.0,
+                    "approved_count": s.get("approved", 0),
+                    "rejected_count": s.get("rejected", 0),
+                    "total_decisions": s.get("total", 0),
                     "pending_count": len(queue),
-                    "pending_change": 0.0,
-                    "accounts_count": s.get("approved", 0),
+                    "last_decision": s.get("last_decision"),
                 }
             except Exception:
                 pass
         if role == "ADMIN":
             try:
                 s = self.get_admin_stats()
+                payments = s.get("payments", {})
+                bankers = s.get("bankers", [])
                 return {
-                    "balance": 0.0,
-                    "balance_change": 0.0,
-                    "transactions_count": s.get("total_payments", 0),
-                    "transactions_change": 0.0,
-                    "pending_count": s.get("pending_payments", 0),
-                    "pending_change": 0.0,
-                    "accounts_count": s.get("total_users", 0),
+                    "total_payments": payments.get("total", 0),
+                    "pending_payments": payments.get("pending", 0),
+                    "approved_payments": payments.get("approved", 0),
+                    "rejected_payments": payments.get("rejected", 0),
+                    "completed_payments": payments.get("completed", 0),
+                    "bankers_count": len(bankers),
                 }
             except Exception:
                 pass
@@ -136,34 +191,71 @@ class ApiClient:
 
     def get_recent_transactions(self) -> list:
         role = jwt_manager.get_role_key()
+        if role == "ADMIN":
+            return []
         if role == "BANKER":
-            try:
-                return self.get_banker_history()[:3]
-            except Exception:
-                return []
+            return []
         payments = self._get("/api/payments")
         return [self._normalize_payment(p) for p in payments[:3]]
 
     # --- Payments ---
 
-    def send_payment(self, payload: dict) -> dict:
-        recipient_raw = str(payload.get("recipient_account", "1"))
-        try:
-            # Extract last 6 digits as recipient user ID
-            recipient_id = int(recipient_raw[-6:].lstrip("0") or "1")
-        except (ValueError, TypeError):
-            recipient_id = 1
-
-        amount_kopecks = int(float(payload.get("amount", 0)) * 100)
-
+    def _create_payment(self, recipient_id: int, amount: float, purpose: str) -> dict:
+        amount_kopecks = int(float(amount) * 100)
         api_payload = {
             "recipient_id": recipient_id,
             "amount": amount_kopecks,
-            "description": payload.get("purpose", ""),
+            "description": purpose,
             "payment_type": "SINGLE",
         }
         resp = self._post("/api/payments", api_payload)
         return {"id": str(resp.get("id", "N/A")), "status": resp.get("status", "")}
+
+    def send_payment(self, payload: dict) -> dict:
+        try:
+            recipient_id = account_number_to_user_id(str(payload.get("recipient_account", "")))
+        except ValueError as e:
+            raise RuntimeError(str(e))
+
+        return self._create_payment(recipient_id, payload.get("amount", 0), payload.get("purpose", ""))
+
+    def send_payment_by_email(self, payload: dict) -> dict:
+        recipient = self.resolve_recipient_by_email(str(payload.get("recipient_email", "")))
+        return self._create_payment(recipient["id"], payload.get("amount", 0), payload.get("purpose", ""))
+
+    def resolve_recipient_by_email(self, email: str) -> dict:
+        needle = email.strip().lower()
+        if not needle:
+            raise RuntimeError("Укажите email получателя.")
+
+        role = jwt_manager.get_role_key()
+        if role == "ADMIN":
+            users = self.get_admin_users(q=needle, role="CLIENT", limit=10)
+        elif role == "BANKER":
+            users = self.get_banker_clients(q=needle, limit=10)
+        else:
+            raise RuntimeError(
+                "Сервер пока не даёт клиентам поиск получателя по email. "
+                "Нужен backend endpoint для получения id клиента по email."
+            )
+
+        for user in users:
+            if str(user.get("email", "")).strip().lower() == needle:
+                return user
+
+        raise RuntimeError("Клиент с таким email не найден.")
+
+    def get_payment(self, payment_id: int | str) -> dict:
+        return self._get(f"/api/payments/{payment_id}")
+
+    def wait_payment_status(self, payment_id: int | str, attempts: int = 4, delay: float = 0.8) -> dict:
+        payment = {}
+        for _ in range(attempts):
+            payment = self.get_payment(payment_id)
+            if payment.get("status") != "PENDING":
+                break
+            sleep(delay)
+        return payment
 
     # --- History ---
 
@@ -181,7 +273,7 @@ class ApiClient:
         me = self.get_me()
         user_id = me.get("id", 1)
         balance_kopecks = me.get("balance", 0)
-        number = f"4070281{str(user_id).zfill(13)}"
+        number = user_id_to_account_number(user_id)
         return [{
             "id": f"ACC-{user_id}",
             "name": "Основной счёт",
@@ -202,8 +294,11 @@ class ApiClient:
         body = {"reason": reason} if reason else {}
         return self._post(f"/api/banker/reject/{payment_id}", body)
 
-    def get_banker_clients(self) -> list:
-        return self._get("/api/banker/clients")
+    def get_banker_clients(self, q: str = "", limit: int = 100) -> list:
+        params = {"limit": limit}
+        if q:
+            params["q"] = q
+        return self._get("/api/banker/clients", params=params)
 
     def get_banker_client(self, client_id: int) -> dict:
         return self._get(f"/api/banker/clients/{client_id}")
@@ -214,15 +309,31 @@ class ApiClient:
         return [self._normalize_payment(p) for p in payments]
 
     def get_banker_stats(self) -> dict:
-        return self._get("/api/banker/stats")
+        key = ("banker_stats", jwt_manager.get_token())
+        cached = self._cache_get(key)
+        if cached:
+            return cached
+        return self._cache_set(key, self._get("/api/banker/stats"))
 
     # --- Admin ---
 
-    def get_admin_users(self) -> list:
-        return self._get("/api/admin/users")
+    def get_admin_users(self, q: str = "", role: str = "", limit: int = 100) -> list:
+        params = {"limit": limit}
+        if q:
+            params["q"] = q
+        if role:
+            params["role"] = role
+        return self._get("/api/admin/users", params=params)
+
+    def create_admin_user(self, payload: dict) -> dict:
+        return self._post("/api/admin/users", payload)
 
     def get_admin_stats(self) -> dict:
-        return self._get("/api/admin/stats")
+        key = ("admin_stats", jwt_manager.get_token())
+        cached = self._cache_get(key)
+        if cached:
+            return cached
+        return self._cache_set(key, self._get("/api/admin/stats"))
 
     def get_admin_audit(self) -> list:
         return self._get("/api/admin/audit")

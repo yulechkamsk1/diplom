@@ -6,6 +6,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from api.client import api_client
 from auth.jwt_manager import jwt_manager
+from ui.async_utils import run_async
 
 
 class LoginWindow(QWidget):
@@ -14,6 +15,7 @@ class LoginWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("loginBg")
+        self._login_worker = None
         self._build_ui()
 
     def _build_ui(self):
@@ -23,8 +25,9 @@ class LoginWindow(QWidget):
 
         card = QFrame()
         card.setObjectName("loginCard")
-        card.setFixedWidth(420)
-        card.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        card.setMinimumWidth(320)
+        card.setMaximumWidth(420)
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         layout = QVBoxLayout(card)
         layout.setContentsMargins(40, 40, 40, 40)
@@ -150,12 +153,22 @@ class LoginWindow(QWidget):
         self._set_error("")
         self.login_btn.setEnabled(False)
         self.login_btn.setText("Вход...")
+        self.username_edit.setEnabled(False)
+        self.password_edit.setEnabled(False)
 
-        try:
-            api_client.login(username, password)
-            self.login_success.emit()
-        except Exception as e:
-            self._set_error(str(e))
-        finally:
-            self.login_btn.setEnabled(True)
-            self.login_btn.setText("Войти")
+        self._login_worker = run_async(
+            lambda: api_client.login(username, password),
+            on_success=lambda _: self.login_success.emit(),
+            on_error=self._on_login_error,
+            on_finished=self._on_login_finished,
+        )
+
+    def _on_login_error(self, msg: str):
+        self._set_error(msg)
+
+    def _on_login_finished(self):
+        self.username_edit.setEnabled(True)
+        self.password_edit.setEnabled(True)
+        self.login_btn.setEnabled(True)
+        self.login_btn.setText("Войти")
+        self._login_worker = None

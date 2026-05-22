@@ -8,8 +8,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor
 from api.client import api_client
+from ui.async_utils import run_async
+from ui.responsive import configure_table
 from ui.styles import badge_style
-cv
 
 _SORT_KEYS = {
     0: lambda t: int(t["id"]) if t["id"].isdigit() else 0,
@@ -28,6 +29,7 @@ class History(QWidget):
         self._all_transactions = []
         self._sort_col = 1
         self._sort_asc = False
+        self._load_worker = None
         self._build_ui()
         self._load_data()
 
@@ -80,9 +82,9 @@ class History(QWidget):
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Поиск по получателю...")
         self.search_edit.setMinimumHeight(38)
-        self.search_edit.setMinimumWidth(200)
+        self.search_edit.setMinimumWidth(160)
         self.search_edit.textChanged.connect(self._apply_filters)
-        row.addWidget(self.search_edit)
+        row.addWidget(self.search_edit, stretch=1)
 
         # Apply button
         apply_btn = QPushButton("Применить фильтры")
@@ -130,18 +132,30 @@ class History(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
+        configure_table(self.table, stretch_columns=(2,), min_height=300)
         table_layout.addWidget(self.table)
 
         layout.addWidget(table_card)
 
     def _load_data(self):
-        try:
-            self._all_transactions = api_client.get_transactions()
-        except Exception as e:
-            self._all_transactions = []
-            self.count_label.setText(str(e))
-            self.count_label.setStyleSheet("color: #EF4444;")
+        self.count_label.setText("Транзакции (загрузка...)")
+        self._load_worker = run_async(
+            api_client.get_transactions,
+            on_success=self._on_transactions_loaded,
+            on_error=self._on_load_error,
+            on_finished=lambda: setattr(self, "_load_worker", None),
+        )
+
+    def _on_transactions_loaded(self, transactions: list):
+        self._all_transactions = transactions
+        self.count_label.setStyleSheet("")
         self._render_table(self._all_transactions)
+
+    def _on_load_error(self, msg: str):
+        self._all_transactions = []
+        self.count_label.setText(msg)
+        self.count_label.setStyleSheet("color: #EF4444;")
+        self._render_table([])
 
     def _on_header_clicked(self, col: int):
         if col not in _SORT_KEYS:

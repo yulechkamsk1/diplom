@@ -3,17 +3,26 @@ from PyQt6.QtWidgets import (
     QFrame, QTableWidget, QTableWidgetItem, QHeaderView,
     QInputDialog, QMessageBox,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from api.client import api_client
+from ui.async_utils import run_async
+from ui.responsive import configure_table
 
 
 class BankerQueue(QWidget):
     def __init__(self):
         super().__init__()
         self._queue = []
+        self._load_worker = None
+        self._action_worker = None
+        self._loading = False
         self._build_ui()
         self._load_data()
+        self._auto_refresh = QTimer(self)
+        self._auto_refresh.setInterval(10_000)
+        self._auto_refresh.timeout.connect(lambda: self._load_data(show_errors=False))
+        self._auto_refresh.start()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -49,18 +58,30 @@ class BankerQueue(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
-        self.table.setMinimumHeight(300)
+        configure_table(self.table, stretch_columns=(3,), min_height=300)
         card_layout.addWidget(self.table)
 
         layout.addWidget(card)
 
-    def _load_data(self):
-        try:
-            self._queue = api_client.get_banker_queue()
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка", str(e))
+    def _load_data(self, show_errors: bool = True):
+        if self._loading:
             return
+        self._loading = True
+        self.count_label.setText("Очередь платежей (загрузка...)")
+        self._load_worker = run_async(
+            api_client.get_banker_queue,
+            on_success=self._on_queue_loaded,
+            on_error=(lambda msg: QMessageBox.critical(self, "Ошибка", msg)) if show_errors else None,
+            on_finished=self._on_load_finished,
+        )
+
+    def _on_queue_loaded(self, queue: list):
+        self._queue = queue
         self._render()
+
+    def _on_load_finished(self):
+        self._loading = False
+        self._load_worker = None
 
     def _render(self):
         self.count_label.setText(f"Очередь платежей ({len(self._queue)})")
@@ -125,12 +146,12 @@ class BankerQueue(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        try:
-            api_client.approve_payment(payment_id)
-            QMessageBox.information(self, "Готово", f"Платёж #{payment_id} одобрен.")
-            self._load_data()
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка", str(e))
+        self._action_worker = run_async(
+            lambda: api_client.approve_payment(payment_id),
+            on_success=lambda _: (QMessageBox.information(self, "Готово", f"Платёж #{payment_id} одобрен."), self._load_data()),
+            on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
+            on_finished=lambda: setattr(self, "_action_worker", None),
+        )
 
     def _reject(self, payment_id: int):
         reason, ok = QInputDialog.getText(
@@ -139,9 +160,9 @@ class BankerQueue(QWidget):
         )
         if not ok:
             return
-        try:
-            api_client.reject_payment(payment_id, reason)
-            QMessageBox.information(self, "Готово", f"Платёж #{payment_id} отклонён.")
-            self._load_data()
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка", str(e))
+        self._action_worker = run_async(
+            lambda: api_client.reject_payment(payment_id, reason),
+            on_success=lambda _: (QMessageBox.information(self, "Готово", f"Платёж #{payment_id} отклонён."), self._load_data()),
+            on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
+            on_finished=lambda: setattr(self, "_action_worker", None),
+        )

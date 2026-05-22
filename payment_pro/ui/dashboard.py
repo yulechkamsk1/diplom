@@ -7,6 +7,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 from api.client import api_client
 from auth.jwt_manager import jwt_manager
+from ui.async_utils import run_async
+from ui.responsive import ResponsiveGrid, configure_table
 from ui.styles import badge_style
 
 
@@ -57,6 +59,7 @@ class Dashboard(QWidget):
 
     def __init__(self):
         super().__init__()
+        self._load_worker = None
         self._build_ui()
         self._load_data()
 
@@ -76,9 +79,8 @@ class Dashboard(QWidget):
         self.layout_.setContentsMargins(28, 24, 28, 24)
         self.layout_.setSpacing(24)
 
-        self.cards_row = QHBoxLayout()
-        self.cards_row.setSpacing(16)
-        self.layout_.addLayout(self.cards_row)
+        self.cards_grid = ResponsiveGrid(min_item_width=230, max_columns=4)
+        self.layout_.addWidget(self.cards_grid)
 
         # Quick actions
         qa_frame = QFrame()
@@ -124,15 +126,22 @@ class Dashboard(QWidget):
             btn_clients.clicked.connect(lambda: self.navigate.emit("clients"))
             btn_row.addWidget(btn_clients)
         elif role == "ADMIN":
+            btn_stats = QPushButton("Статистика")
+            btn_stats.setObjectName("btnNewPayment")
+            btn_stats.setMinimumHeight(44)
+            btn_stats.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_stats.clicked.connect(lambda: self.navigate.emit("stats"))
+            btn_row.addWidget(btn_stats)
+
             btn_users = QPushButton("Пользователи")
-            btn_users.setObjectName("btnNewPayment")
+            btn_users.setObjectName("btnTransfer")
             btn_users.setMinimumHeight(44)
             btn_users.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_users.clicked.connect(lambda: self.navigate.emit("users"))
             btn_row.addWidget(btn_users)
 
             btn_audit = QPushButton("Журнал аудита")
-            btn_audit.setObjectName("btnTransfer")
+            btn_audit.setObjectName("btnHistory")
             btn_audit.setMinimumHeight(44)
             btn_audit.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_audit.clicked.connect(lambda: self.navigate.emit("audit"))
@@ -178,44 +187,63 @@ class Dashboard(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
-        self.table.setMinimumHeight(180)
+        configure_table(self.table, stretch_columns=(1,), min_height=180)
         txn_layout.addWidget(self.table)
 
         self.layout_.addWidget(txn_frame)
         self.layout_.addStretch()
 
     def _load_data(self):
-        try:
-            stats = api_client.get_dashboard_stats()
-        except Exception as e:
-            stats = {
-                "balance": 0, "balance_change": 0,
-                "transactions_count": 0, "transactions_change": 0,
-                "pending_count": 0, "pending_change": 0, "accounts_count": 0,
-            }
-            err_lbl = QLabel(str(e))
-            err_lbl.setStyleSheet("color: #EF4444; font-size: 13px;")
-            self.layout_.insertWidget(0, err_lbl)
+        self.cards_grid.clear()
+        for label in ["Показатели", "Операции", "Статус", "Сводка"]:
+            self.cards_grid.add_card(StatCard(label, "…", "загрузка", True, "...", "#E2E8F0"))
+        self.table.setRowCount(0)
+        self._load_worker = run_async(
+            lambda: {
+                "stats": api_client.get_dashboard_stats(),
+                "transactions": api_client.get_recent_transactions(),
+            },
+            on_success=self._render_data,
+            on_error=self._show_error,
+            on_finished=lambda: setattr(self, "_load_worker", None),
+        )
 
-        cards = [
-            ("Баланс", f"₽ {stats['balance']:,.2f}", f"{abs(stats['balance_change'])}% за месяц",
-             stats['balance_change'] >= 0, "₽", "#DCFCE7"),
-            ("Транзакции", f"{stats['transactions_count']:,}", f"{abs(stats['transactions_change'])}% за неделю",
-             stats['transactions_change'] >= 0, "TX", "#DBEAFE"),
-            ("В обработке", str(stats['pending_count']), f"{abs(stats['pending_change'])}% за день",
-             stats['pending_change'] >= 0, "...", "#FEF3C7"),
-            ("Счета", f"{stats['accounts_count']} активных", "активных счетов",
-             True, "Сч", "#EDE9FE"),
-        ]
+    def _render_data(self, data: dict):
+        role = jwt_manager.get_role_key()
+        stats = data.get("stats", {})
+        transactions = data.get("transactions", [])
+
+        self.cards_grid.clear()
+        if role == "BANKER":
+            cards = [
+                ("Одобрено", str(stats.get("approved_count", 0)), "решений", True, "OK", "#DCFCE7"),
+                ("Отклонено", str(stats.get("rejected_count", 0)), "решений", False, "NO", "#FEE2E2"),
+                ("Всего решений", str(stats.get("total_decisions", 0)), "за всё время", True, "Σ", "#DBEAFE"),
+                ("В очереди", str(stats.get("pending_count", 0)), "ожидают проверки", True, "...", "#FEF3C7"),
+            ]
+        elif role == "ADMIN":
+            cards = [
+                ("Всего платежей", f"{stats.get('total_payments', 0):,}", "в системе", True, "TX", "#DBEAFE"),
+                ("В ожидании", str(stats.get("pending_payments", 0)), "ожидают банкира", True, "...", "#FEF3C7"),
+                ("Одобрено", str(stats.get("approved_payments", 0)), "решений", True, "OK", "#DCFCE7"),
+                ("Отклонено", str(stats.get("rejected_payments", 0)), "решений", False, "NO", "#FEE2E2"),
+            ]
+        else:
+            cards = [
+                ("Баланс", f"₽ {stats.get('balance', 0):,.2f}", f"{abs(stats.get('balance_change', 0))}% за месяц",
+                 stats.get('balance_change', 0) >= 0, "₽", "#DCFCE7"),
+                ("Транзакции", f"{stats.get('transactions_count', 0):,}", f"{abs(stats.get('transactions_change', 0))}% за неделю",
+                 stats.get('transactions_change', 0) >= 0, "TX", "#DBEAFE"),
+                ("В обработке", str(stats.get("pending_count", 0)), f"{abs(stats.get('pending_change', 0))}% за день",
+                 stats.get('pending_change', 0) >= 0, "...", "#FEF3C7"),
+                ("Счета", f"{stats.get('accounts_count', 0)} активных", "активных счетов",
+                 True, "Сч", "#EDE9FE"),
+            ]
 
         for label, value, change, positive, icon, color in cards:
             card = StatCard(label, value, change, positive, icon, color)
-            self.cards_row.addWidget(card)
+            self.cards_grid.add_card(card)
 
-        try:
-            transactions = api_client.get_recent_transactions()
-        except Exception:
-            transactions = []
         self.table.setRowCount(len(transactions))
         for row, txn in enumerate(transactions):
             amount = txn["amount"]
@@ -243,3 +271,7 @@ class Dashboard(QWidget):
 
         self.table.resizeColumnToContents(0)
         self.table.resizeColumnToContents(3)
+
+    def _show_error(self, msg: str):
+        self.cards_grid.clear()
+        self.cards_grid.add_card(StatCard("Ошибка", "—", msg, False, "!", "#FEE2E2"))
