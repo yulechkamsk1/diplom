@@ -14,7 +14,7 @@ from ui.styles import badge_style
 
 def _short_name(full: str) -> str:
     parts = full.strip().split()
-    if len(parts) >= 2:
+    if len(parts) >= 2 and parts[1][0].isalpha():
         return f"{parts[0]}.{parts[1][0].upper()}"
     return full
 
