@@ -1,6 +1,6 @@
 import re
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFrame, QComboBox, QTextEdit, QScrollArea,
@@ -22,6 +22,8 @@ PAYMENT_STATUS_LABELS = {
 
 
 class Payments(QWidget):
+    payment_sent = pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self._load_worker = None
@@ -427,6 +429,8 @@ class Payments(QWidget):
             self._clear_email_form()
         else:
             self._clear_account_form()
+        api_client.clear_cache()
+        self.payment_sent.emit()
 
     def _on_submit_finished(self):
         self.account_submit_btn.setEnabled(True)

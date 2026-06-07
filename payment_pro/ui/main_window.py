@@ -121,7 +121,9 @@ class MainWindow(QMainWindow):
             self._register_page("users", AdminUsers)
             self._register_page("audit", AdminAudit)
         else:
-            self._register_page("payments", Payments)
+            payments_page = Payments()
+            payments_page.payment_sent.connect(self._refresh_after_payment)
+            self._add_page("payments", payments_page)
             self._register_page("accounts", Accounts)
 
         right_layout.addWidget(self.stack, stretch=1)
@@ -316,6 +318,12 @@ class MainWindow(QMainWindow):
         self.page_subtitle.setText(subtitle)
 
         self.stack.setCurrentWidget(widget)
+
+    def _refresh_after_payment(self):
+        for page_id in ("dashboard", "accounts", "history"):
+            page = self._pages.get(page_id)
+            if page and hasattr(page, "_load_data"):
+                page._load_data()
 
     def _logout(self):
         jwt_manager.clear()

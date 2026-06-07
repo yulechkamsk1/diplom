@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 
 
 def configure_table(table: QTableWidget, stretch_columns: tuple[int, ...] = (), min_height: int = 260) -> None:
-    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
     table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
@@ -23,12 +23,17 @@ def configure_table(table: QTableWidget, stretch_columns: tuple[int, ...] = (), 
     header.setStretchLastSection(False)
     header.setMinimumSectionSize(60)
     header.setDefaultSectionSize(130)
-    # Все колонки — интерактивные (можно тянуть мышью)
-    for col in range(table.columnCount()):
+    header.setSectionsMovable(True)
+    col_count = table.columnCount()
+    for col in range(col_count):
         header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
-    # "Широкие" колонки получают увеличенный стартовый размер вместо Stretch
+    # Последняя колонка растягивается — таблица выглядит аккуратно когда данных мало
+    if col_count > 0:
+        header.setSectionResizeMode(col_count - 1, QHeaderView.ResizeMode.Stretch)
+    # Указанные колонки получают увеличенный стартовый размер
     for col in stretch_columns:
-        header.resizeSection(col, 200)
+        if col < col_count - 1:
+            header.resizeSection(col, 180)
 
 
 class ResponsiveGrid(QWidget):
