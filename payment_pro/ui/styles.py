@@ -428,6 +428,16 @@ QScrollArea {
 QScrollArea > QWidget > QWidget {
     background: transparent;
 }
+
+QToolTip {
+    background: #1E293B;
+    color: #F1F5F9;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.6;
+}
 """
 
 

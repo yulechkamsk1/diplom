@@ -1,11 +1,48 @@
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QEvent, QObject
 from PyQt6.QtWidgets import (
     QGridLayout,
     QHeaderView,
     QSizePolicy,
     QTableWidget,
+    QToolTip,
     QWidget,
 )
+
+_SKIP_HEADERS = {"Действия", "История", "Лимиты", ""}
+
+
+class _RowTooltip(QObject):
+    def __init__(self, table: QTableWidget):
+        super().__init__(table)
+        self._table = table
+        table.viewport().setMouseTracking(True)
+        table.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseMove:
+            row = self._table.rowAt(event.pos().y())
+            if row >= 0:
+                parts = []
+                for col in range(self._table.columnCount()):
+                    h = self._table.horizontalHeaderItem(col)
+                    header = h.text().strip() if h else ""
+                    if header in _SKIP_HEADERS:
+                        continue
+                    item = self._table.item(row, col)
+                    val = item.text().strip() if item else ""
+                    if val:
+                        parts.append(f"<b>{header}:</b> {val}")
+                if parts:
+                    QToolTip.showText(
+                        event.globalPosition().toPoint(),
+                        "<br>".join(parts),
+                        self._table.viewport(),
+                    )
+                else:
+                    QToolTip.hideText()
+            else:
+                QToolTip.hideText()
+        return False
 
 
 def configure_table(table: QTableWidget, stretch_columns: tuple[int, ...] = (), min_height: int = 260) -> None:
@@ -26,6 +63,8 @@ def configure_table(table: QTableWidget, stretch_columns: tuple[int, ...] = (), 
         header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
     for col in stretch_columns:
         header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+
+    _RowTooltip(table)
 
 
 class ResponsiveGrid(QWidget):
