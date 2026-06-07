@@ -399,7 +399,19 @@ class ApiClient:
             amount_rub = -amount_rub
 
         recipient_id = payment.get("recipient_id")
-        recipient_label = f"Получатель #{recipient_id}" if recipient_id else "—"
+        recip_obj = payment.get("recipient") or {}
+        recipient_label = (
+            recip_obj.get("full_name")
+            or recip_obj.get("email")
+            or payment.get("recipient_email")
+            or payment.get("recipient_name")
+        )
+        if not recipient_label:
+            if recipient_id:
+                acct = user_id_to_account_number(recipient_id)
+                recipient_label = f"Счёт ...{acct[-4:]}"
+            else:
+                recipient_label = "—"
 
         return {
             "id": str(payment.get("id", "")),

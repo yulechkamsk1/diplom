@@ -1,3 +1,4 @@
+import json
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
@@ -41,6 +42,41 @@ def _translate_action(action: str) -> str:
         return "—"
     key = action.lower().replace(" ", "_").replace("-", "_")
     return ACTION_LABELS.get(key, action)
+
+
+def _format_details(raw) -> str:
+    if not raw:
+        return "—"
+    if isinstance(raw, dict):
+        obj = raw
+    elif isinstance(raw, str):
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            return raw
+    else:
+        return str(raw)
+    FIELD_LABELS = {
+        "amount": "Сумма",
+        "status": "Статус",
+        "reason": "Причина",
+        "email": "Email",
+        "role": "Роль",
+        "daily_limit": "Лимит/день",
+        "monthly_limit": "Лимит/месяц",
+        "ip": "IP",
+        "description": "Описание",
+        "balance": "Баланс",
+        "recipient_id": "Получатель ID",
+        "sender_id": "Отправитель ID",
+    }
+    parts = []
+    for k, v in obj.items():
+        label = FIELD_LABELS.get(k, k)
+        if k in ("amount", "daily_limit", "monthly_limit") and isinstance(v, (int, float)):
+            v = f"₽ {v / 100:,.2f}"
+        parts.append(f"{label}: {v}")
+    return " | ".join(parts) if parts else "—"
 
 
 def _translate_entity(entity_type: str, entity_id) -> str:
@@ -145,7 +181,7 @@ class AdminAudit(QWidget):
                 e.get("entity_type", ""),
                 e.get("entity_id") or e.get("target"),
             )
-            details_str = e.get("details") or "—"
+            details_str = _format_details(e.get("details") or e.get("metadata"))
 
             items = [
                 QTableWidgetItem(_fmt_dt(e.get("created_at") or e.get("timestamp"))),

@@ -431,6 +431,8 @@ class Payments(QWidget):
             self._clear_account_form()
         api_client.clear_cache()
         self.payment_sent.emit()
+        from ui.notifications import add as notify
+        notify(f"Платёж #{payment_id} отправлен — {status_label}", kind="success")
 
     def _on_submit_finished(self):
         self.account_submit_btn.setEnabled(True)

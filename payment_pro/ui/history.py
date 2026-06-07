@@ -66,6 +66,7 @@ class History(QWidget):
         self.date_from.setDate(QDate.currentDate().addDays(-30))
         self.date_from.setMinimumHeight(38)
         self.date_from.setMinimumWidth(130)
+        self.date_from.dateChanged.connect(self._apply_filters)
         row.addWidget(self.date_from)
 
         # Date to
@@ -75,6 +76,7 @@ class History(QWidget):
         self.date_to.setDate(QDate.currentDate())
         self.date_to.setMinimumHeight(38)
         self.date_to.setMinimumWidth(130)
+        self.date_to.dateChanged.connect(self._apply_filters)
         row.addWidget(self.date_to)
 
         # Status
@@ -83,6 +85,7 @@ class History(QWidget):
         self.status_combo.setMinimumHeight(38)
         self.status_combo.setMinimumWidth(140)
         self.status_combo.addItems(["Все", "Завершён", "Обработка", "Ошибка"])
+        self.status_combo.currentIndexChanged.connect(self._apply_filters)
         row.addWidget(self.status_combo)
 
         # Search
@@ -93,13 +96,12 @@ class History(QWidget):
         self.search_edit.textChanged.connect(self._apply_filters)
         row.addWidget(self.search_edit, stretch=1)
 
-        # Apply button
-        apply_btn = QPushButton("Применить фильтры")
-        apply_btn.setObjectName("filterButton")
-        apply_btn.setMinimumHeight(38)
-        apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        apply_btn.clicked.connect(self._apply_filters)
-        row.addWidget(apply_btn)
+        reset_btn = QPushButton("Сбросить фильтры")
+        reset_btn.setObjectName("filterButton")
+        reset_btn.setMinimumHeight(38)
+        reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        reset_btn.clicked.connect(self._reset_filters)
+        row.addWidget(reset_btn)
 
         row.addStretch()
 
@@ -182,6 +184,12 @@ class History(QWidget):
                 item = self.table.horizontalHeaderItem(col)
                 if item:
                     item.setText(label)
+
+    def _reset_filters(self):
+        self.date_from.setDate(QDate.currentDate().addDays(-30))
+        self.date_to.setDate(QDate.currentDate())
+        self.status_combo.setCurrentIndex(0)
+        self.search_edit.clear()
 
     def _apply_filters(self):
         search = self.search_edit.text().strip().lower()

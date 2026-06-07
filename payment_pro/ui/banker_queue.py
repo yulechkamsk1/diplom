@@ -156,9 +156,15 @@ class BankerQueue(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
+        def _on_approved(_):
+            from ui.notifications import add as notify
+            notify(f"Платёж #{payment_id} одобрен", kind="success")
+            QMessageBox.information(self, "Готово", f"Платёж #{payment_id} одобрен.")
+            self._load_data()
+
         self._action_worker = run_async(
             lambda: api_client.approve_payment(payment_id),
-            on_success=lambda _: (QMessageBox.information(self, "Готово", f"Платёж #{payment_id} одобрен."), self._load_data()),
+            on_success=_on_approved,
             on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
             on_finished=lambda: setattr(self, "_action_worker", None),
         )
@@ -170,9 +176,15 @@ class BankerQueue(QWidget):
         )
         if not ok:
             return
+        def _on_rejected(_):
+            from ui.notifications import add as notify
+            notify(f"Платёж #{payment_id} отклонён", kind="warning")
+            QMessageBox.information(self, "Готово", f"Платёж #{payment_id} отклонён.")
+            self._load_data()
+
         self._action_worker = run_async(
             lambda: api_client.reject_payment(payment_id, reason),
-            on_success=lambda _: (QMessageBox.information(self, "Готово", f"Платёж #{payment_id} отклонён."), self._load_data()),
+            on_success=_on_rejected,
             on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
             on_finished=lambda: setattr(self, "_action_worker", None),
         )

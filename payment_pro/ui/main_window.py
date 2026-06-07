@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QLabel, QPushButton, QStackedWidget, QFrame, QSizePolicy,
+    QLabel, QPushButton, QStackedWidget, QFrame, QSizePolicy, QScrollArea,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -240,12 +240,13 @@ class MainWindow(QMainWindow):
         layout.addLayout(title_col)
         layout.addStretch()
 
-        notif_btn = QPushButton("Уведомления")
-        notif_btn.setObjectName("notifButton")
-        notif_btn.setFixedHeight(36)
-        notif_btn.setMaximumWidth(150)
-        notif_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout.addWidget(notif_btn)
+        self.notif_btn = QPushButton("Уведомления")
+        self.notif_btn.setObjectName("notifButton")
+        self.notif_btn.setFixedHeight(36)
+        self.notif_btn.setMaximumWidth(150)
+        self.notif_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.notif_btn.clicked.connect(self._show_notifications)
+        layout.addWidget(self.notif_btn)
 
         username = jwt_manager.get_username()
         role = jwt_manager.get_role()
@@ -318,6 +319,107 @@ class MainWindow(QMainWindow):
         self.page_subtitle.setText(subtitle)
 
         self.stack.setCurrentWidget(widget)
+
+    def _show_notifications(self):
+        from ui.notifications import get_all, clear, COLORS, ICONS
+        from PyQt6.QtWidgets import QFrame, QScrollArea
+        from PyQt6.QtCore import QPoint
+
+        items = get_all()
+
+        popup = QFrame(self, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        popup.setMinimumWidth(340)
+        popup.setMaximumWidth(400)
+        popup.setStyleSheet("""
+            QFrame { background:#1E293B; border:1.5px solid #334155; border-radius:12px; }
+            QLabel { font-family:'Segoe UI',Arial; color:#F1F5F9; }
+        """)
+
+        outer = QVBoxLayout(popup)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        title_bar = QWidget()
+        title_bar.setStyleSheet("background:#0F172A; border-radius:12px 12px 0 0;")
+        tb_layout = QHBoxLayout(title_bar)
+        tb_layout.setContentsMargins(16, 10, 12, 10)
+        t = QLabel("Уведомления")
+        t.setStyleSheet("color:#F1F5F9; font-size:14px; font-weight:600;")
+        clr_btn = QPushButton("Очистить")
+        clr_btn.setStyleSheet(
+            "QPushButton{border:none;background:transparent;color:#94A3B8;font-size:12px;}"
+            "QPushButton:hover{color:#EF4444;}"
+        )
+        clr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        def _do_clear():
+            clear()
+            popup.close()
+
+        clr_btn.clicked.connect(_do_clear)
+        tb_layout.addWidget(t)
+        tb_layout.addStretch()
+        tb_layout.addWidget(clr_btn)
+        outer.addWidget(title_bar)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background:transparent;")
+        scroll.setMaximumHeight(400)
+
+        body = QWidget()
+        body.setStyleSheet("background:transparent;")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(12, 8, 12, 12)
+        body_layout.setSpacing(6)
+
+        if not items:
+            empty = QLabel("Нет уведомлений")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty.setStyleSheet("color:#64748B; font-size:13px; padding:24px;")
+            body_layout.addWidget(empty)
+        else:
+            for n in items:
+                color = COLORS.get(n["kind"], "#3B82F6")
+                icon = ICONS.get(n["kind"], "i")
+                card = QFrame()
+                card.setStyleSheet(f"""
+                    QFrame {{
+                        background:#0F172A;
+                        border-left:3px solid {color};
+                        border-radius:6px;
+                    }}
+                """)
+                cl = QHBoxLayout(card)
+                cl.setContentsMargins(10, 8, 10, 8)
+                cl.setSpacing(10)
+                ic = QLabel(icon)
+                ic.setStyleSheet(f"color:{color}; font-size:14px; font-weight:700;")
+                ic.setFixedWidth(16)
+                msg = QLabel(n["message"])
+                msg.setStyleSheet("color:#E2E8F0; font-size:12px;")
+                msg.setWordWrap(True)
+                ts = QLabel(n["time"])
+                ts.setStyleSheet("color:#64748B; font-size:11px;")
+                ts.setFixedWidth(38)
+                cl.addWidget(ic)
+                cl.addWidget(msg, 1)
+                cl.addWidget(ts)
+                body_layout.addWidget(card)
+
+        body_layout.addStretch()
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
+        popup.adjustSize()
+
+        btn_pos = self.notif_btn.mapToGlobal(QPoint(0, self.notif_btn.height() + 4))
+        x = btn_pos.x()
+        from PyQt6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen().geometry()
+        if x + popup.width() > screen.right() - 10:
+            x = screen.right() - popup.width() - 10
+        popup.move(x, btn_pos.y())
+        popup.show()
 
     def _refresh_after_payment(self):
         for page_id in ("dashboard", "accounts", "history"):

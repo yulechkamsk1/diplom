@@ -285,40 +285,98 @@ class AdminStats(QWidget):
             on_finished=lambda: setattr(self, "_history_worker", None),
         )
 
-    def _show_client_dialog(self, client_id: int, data: dict):
-        from PyQt6.QtWidgets import QTabWidget, QDialogButtonBox
+    def _show_client_dialog(self, client_id: int, data):
+        from PyQt6.QtWidgets import QTabWidget, QDialogButtonBox, QTabWidget
+        from PyQt6.QtGui import QColor
         from api.client import PAYMENT_STATUS_RU
-        profile = data.get("profile", {})
-        user = profile.get("user", {})
+
+        # data может быть dict {"profile": {...}, "payments": [...]} или list платежей
+        if isinstance(data, dict):
+            profile = data.get("profile", {})
+            user = profile.get("user", profile)
+            payments = data.get("payments", data.get("history", []))
+        elif isinstance(data, list):
+            user = {}
+            payments = data
+        else:
+            user = {}
+            payments = []
+
         name = user.get("full_name") or f"клиент #{client_id}"
 
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Профиль — {name}")
-        dlg.resize(820, 520)
-        layout = QVBoxLayout(dlg)
+        dlg.resize(860, 560)
+        outer = QVBoxLayout(dlg)
 
-        info = QWidget()
-        info_l = QVBoxLayout(info)
-        info_l.setContentsMargins(12, 12, 12, 12)
+        tabs = QTabWidget()
+
+        # --- Вкладка: Профиль ---
+        profile_tab = QWidget()
+        pt_layout = QVBoxLayout(profile_tab)
+        pt_layout.setContentsMargins(20, 16, 20, 16)
+        pt_layout.setSpacing(8)
         for label, value in [
             ("ФИО", user.get("full_name", "—")),
             ("Email", user.get("email", "—")),
             ("Телефон", user.get("phone") or "—"),
             ("Баланс", f"₽ {(user.get('balance', 0) or 0) / 100:,.2f}"),
+            ("Роль", user.get("role", "—")),
         ]:
             row_w = QWidget()
             row_l = QHBoxLayout(row_w)
             row_l.setContentsMargins(0, 2, 0, 2)
             lbl = QLabel(f"<b>{label}:</b>")
-            lbl.setFixedWidth(140)
+            lbl.setFixedWidth(130)
             row_l.addWidget(lbl)
             row_l.addWidget(QLabel(str(value)))
             row_l.addStretch()
-            info_l.addWidget(row_w)
-        info_l.addStretch()
+            pt_layout.addWidget(row_w)
+        pt_layout.addStretch()
+        tabs.addTab(profile_tab, "Профиль")
 
-        layout.addWidget(info)
+        # --- Вкладка: История платежей ---
+        hist_tab = QWidget()
+        ht_layout = QVBoxLayout(hist_tab)
+        ht_layout.setContentsMargins(0, 8, 0, 0)
+
+        from ui.responsive import configure_table
+        tbl = QTableWidget()
+        tbl.setColumnCount(6)
+        tbl.setHorizontalHeaderLabels(["ID", "Дата", "Сумма", "Статус", "Риск-балл", "Описание"])
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        tbl.setAlternatingRowColors(True)
+        tbl.setShowGrid(False)
+        configure_table(tbl, stretch_columns=(5,), min_height=320)
+
+        tbl.setRowCount(len(payments))
+        for row_i, p in enumerate(payments):
+            status_raw = p.get("status", "")
+            amount = p.get("amount", 0) / 100
+            fraud = p.get("fraud_score") or 0
+            fraud_color = "#EF4444" if fraud >= 70 else "#F59E0B" if fraud >= 40 else "#10B981"
+            items = [
+                QTableWidgetItem(str(p.get("id", ""))),
+                QTableWidgetItem(_fmt_dt(p.get("created_at"))),
+                QTableWidgetItem(f"₽ {amount:,.2f}"),
+                QTableWidgetItem(PAYMENT_STATUS_RU.get(status_raw, status_raw or "—")),
+                QTableWidgetItem(str(fraud)),
+                QTableWidgetItem(p.get("description") or "—"),
+            ]
+            items[2].setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            items[4].setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            items[4].setForeground(QColor(fraud_color))
+            for col_i, item in enumerate(items):
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(row_i, col_i, item)
+            tbl.setRowHeight(row_i, 40)
+
+        ht_layout.addWidget(tbl)
+        tabs.addTab(hist_tab, f"История ({len(payments)})")
+
+        outer.addWidget(tabs)
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btns.rejected.connect(dlg.reject)
-        layout.addWidget(btns)
+        outer.addWidget(btns)
         dlg.exec()

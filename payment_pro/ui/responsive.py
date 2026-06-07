@@ -1,48 +1,126 @@
 from PyQt6.QtCore import Qt, QEvent, QObject
 from PyQt6.QtWidgets import (
+    QApplication,
+    QFrame,
     QGridLayout,
+    QHBoxLayout,
     QHeaderView,
+    QLabel,
     QSizePolicy,
     QTableWidget,
-    QToolTip,
     QWidget,
 )
 
 _SKIP_HEADERS = {"Действия", "История", "Лимиты", ""}
 
 
-class _RowTooltip(QObject):
+class _RowPopup(QObject):
     def __init__(self, table: QTableWidget):
         super().__init__(table)
         self._table = table
-        table.viewport().setMouseTracking(True)
+        self._popup: QFrame | None = None
         table.viewport().installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.MouseMove:
+        if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
             row = self._table.rowAt(event.pos().y())
             if row >= 0:
-                parts = []
-                for col in range(self._table.columnCount()):
-                    h = self._table.horizontalHeaderItem(col)
-                    header = h.text().strip() if h else ""
-                    if header in _SKIP_HEADERS:
-                        continue
-                    item = self._table.item(row, col)
-                    val = item.text().strip() if item else ""
-                    if val:
-                        parts.append(f"<b>{header}:</b> {val}")
-                if parts:
-                    QToolTip.showText(
-                        event.globalPosition().toPoint(),
-                        "<br>".join(parts),
-                        self._table.viewport(),
-                    )
-                else:
-                    QToolTip.hideText()
+                self._show(row, event.globalPosition().toPoint())
             else:
-                QToolTip.hideText()
+                self._close()
         return False
+
+    def _close(self):
+        if self._popup:
+            self._popup.close()
+            self._popup = None
+
+    def _show(self, row: int, gpos):
+        self._close()
+
+        parts = []
+        for col in range(self._table.columnCount()):
+            h = self._table.horizontalHeaderItem(col)
+            header = h.text().strip() if h else ""
+            if header in _SKIP_HEADERS:
+                continue
+            item = self._table.item(row, col)
+            val = item.text().strip() if item else ""
+            if val and header:
+                parts.append((header, val))
+
+        if not parts:
+            return
+
+        popup = QFrame(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        popup.setStyleSheet("""
+            QFrame {
+                background: #1E293B;
+                border: 1.5px solid #334155;
+                border-radius: 10px;
+            }
+            QLabel { font-family: 'Segoe UI', Arial; }
+        """)
+
+        layout = QHBoxLayout(popup)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        accent = QFrame()
+        accent.setFixedWidth(4)
+        accent.setStyleSheet("background:#3B82F6; border-radius:10px 0 0 10px;")
+        layout.addWidget(accent)
+
+        inner = QWidget()
+        inner.setStyleSheet("background:transparent;")
+        inner_layout = QHBoxLayout(inner)
+        inner_layout.setContentsMargins(14, 12, 18, 12)
+        inner_layout.setSpacing(24)
+
+        col_count = 2
+        col_layouts = [QWidget() for _ in range(col_count)]
+        for cw in col_layouts:
+            cw.setStyleSheet("background:transparent;")
+            inner_layout.addWidget(cw)
+
+        for i, (header, val) in enumerate(parts):
+            cw = col_layouts[i % col_count]
+            if not cw.layout():
+                from PyQt6.QtWidgets import QVBoxLayout
+                QVBoxLayout(cw).setSpacing(4)
+                cw.layout().setContentsMargins(0, 0, 0, 0)
+
+            row_w = QWidget()
+            row_w.setStyleSheet("background:transparent;")
+            rl = QHBoxLayout(row_w)
+            rl.setContentsMargins(0, 1, 0, 1)
+            rl.setSpacing(8)
+
+            lbl = QLabel(header + ":")
+            lbl.setStyleSheet("color:#94A3B8; font-size:11px;")
+            lbl.setMinimumWidth(90)
+
+            val_lbl = QLabel(val)
+            val_lbl.setStyleSheet("color:#F1F5F9; font-size:13px; font-weight:500;")
+            val_lbl.setWordWrap(True)
+
+            rl.addWidget(lbl)
+            rl.addWidget(val_lbl, 1)
+            cw.layout().addWidget(row_w)
+
+        layout.addWidget(inner)
+        popup.adjustSize()
+
+        screen = QApplication.primaryScreen().geometry()
+        x = gpos.x() + 14
+        y = gpos.y() - popup.height() // 2
+        if x + popup.width() > screen.right() - 10:
+            x = gpos.x() - popup.width() - 14
+        y = max(screen.top() + 10, min(y, screen.bottom() - popup.height() - 10))
+
+        popup.move(x, y)
+        popup.show()
+        self._popup = popup
 
 
 def configure_table(table: QTableWidget, stretch_columns: tuple[int, ...] = (), min_height: int = 260) -> None:
@@ -59,12 +137,13 @@ def configure_table(table: QTableWidget, stretch_columns: tuple[int, ...] = (), 
     header = table.horizontalHeader()
     header.setStretchLastSection(False)
     header.setMinimumSectionSize(70)
+    header.setDefaultSectionSize(130)
     for col in range(table.columnCount()):
         header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
     for col in stretch_columns:
         header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
 
-    _RowTooltip(table)
+    _RowPopup(table)
 
 
 class ResponsiveGrid(QWidget):
