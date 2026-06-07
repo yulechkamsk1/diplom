@@ -71,7 +71,6 @@ class Settings(QWidget):
                     if nested.widget():
                         nested.widget().deleteLater()
 
-        role_labels = {"CLIENT": "Клиент", "BANKER": "Банкир", "ADMIN": "Администратор"}
         balance = me.get("balance", 0) / 100
         daily = me.get("daily_limit", 0) / 100
         monthly = me.get("monthly_limit", 0) / 100
@@ -80,11 +79,9 @@ class Settings(QWidget):
             ("ФИО",               me.get("full_name", "—")),
             ("Email",             me.get("email", "—")),
             ("Телефон",           me.get("phone") or "—"),
-            ("Роль",              role_labels.get(me.get("role", ""), me.get("role", "—"))),
             ("Баланс",            f"₽ {balance:,.2f}"),
             ("Дневной лимит",     f"₽ {daily:,.2f}"),
             ("Месячный лимит",    f"₽ {monthly:,.2f}"),
-            ("Заблокирован",      "Да" if me.get("is_blocked") else "Нет"),
         ]
 
         for label, value in rows:

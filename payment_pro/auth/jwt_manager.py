@@ -3,7 +3,7 @@ import jwt
 
 ROLE_LABELS = {
     "CLIENT": "Клиент",
-    "BANKER": "Банкир",
+    "BANKER": "Оператор",
     "ADMIN": "Администратор",
 }
 

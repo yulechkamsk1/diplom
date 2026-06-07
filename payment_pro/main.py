@@ -20,7 +20,9 @@ class App(QApplication):
         self.setApplicationVersion("1.0.0")
         self.setStyleSheet(MAIN_STYLE)
 
-        font = QFont("Inter", 10)
+        font = QFont()
+        font.setFamilies(["Inter", "Segoe UI", "Arial", "sans-serif"])
+        font.setPointSize(10)
         font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
         self.setFont(font)
 

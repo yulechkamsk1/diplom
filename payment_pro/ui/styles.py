@@ -1,6 +1,6 @@
 MAIN_STYLE = """
 QWidget {
-    font-family: "Inter", "Segoe UI", "Ubuntu", sans-serif;
+    font-family: "Segoe UI", "Inter", "Ubuntu", sans-serif;
     font-size: 14px;
     color: #1E293B;
 }
@@ -95,17 +95,20 @@ QMainWindow, #centralWidget {
     background-color: #3B82F6;
     border-radius: 18px;
     color: #FFFFFF;
+    font-family: "Segoe UI", "Arial", sans-serif;
     font-weight: 700;
-    font-size: 15px;
+    font-size: 14px;
 }
 
 #userName {
+    font-family: "Segoe UI", "Arial", sans-serif;
     font-weight: 600;
     color: #1E293B;
     font-size: 14px;
 }
 
 #userRole {
+    font-family: "Segoe UI", "Arial", sans-serif;
     font-size: 12px;
     color: #94A3B8;
 }

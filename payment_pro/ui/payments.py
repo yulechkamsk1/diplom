@@ -54,12 +54,16 @@ class Payments(QWidget):
         form.setContentsMargins(28, 24, 28, 24)
         form.setSpacing(16)
 
-        title = QLabel("Переводы")
+        title = QLabel("Платежи и переводы")
         title.setObjectName("sectionTitle")
         form.addWidget(title)
 
-        subtitle = QLabel("По счёту получателя или по email")
-        subtitle.setStyleSheet("color: #94A3B8; font-size: 13px;")
+        subtitle = QLabel(
+            "«По счёту» — банковский платёж по 20-значному номеру счёта.   "
+            "«По email» — быстрый перевод клиенту внутри системы."
+        )
+        subtitle.setStyleSheet("color: #64748B; font-size: 12px;")
+        subtitle.setWordWrap(True)
         form.addWidget(subtitle)
 
         form.addSpacing(4)
@@ -71,8 +75,12 @@ class Payments(QWidget):
         form.addWidget(self.sender_error)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_account_tab(), "По счёту")
-        self.tabs.addTab(self._build_email_tab(), "По email")
+        self.tabs.setStyleSheet(
+            "QTabBar::tab { min-width: 140px; padding: 8px 20px; font-size: 13px; font-weight: 600; }"
+            "QTabBar::tab:selected { color: #3B82F6; border-bottom: 2px solid #3B82F6; }"
+        )
+        self.tabs.addTab(self._build_account_tab(), "По счёту (банковский)")
+        self.tabs.addTab(self._build_email_tab(), "По email (перевод клиенту)")
         form.addWidget(self.tabs)
 
         layout.addWidget(card)
@@ -175,6 +183,12 @@ class Payments(QWidget):
         form.addSpacing(8)
         form.addLayout(btn_row)
         return tab
+
+    def switch_to_account_tab(self):
+        self.tabs.setCurrentIndex(0)
+
+    def switch_to_email_tab(self):
+        self.tabs.setCurrentIndex(1)
 
     def _configure_submit_button(self, button: QPushButton):
         button.setObjectName("submitButton")

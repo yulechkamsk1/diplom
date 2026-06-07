@@ -59,6 +59,14 @@ STATUS_MAP = {
     "CANCELLED": "failed",
 }
 
+PAYMENT_STATUS_RU = {
+    "PENDING": "Ожидает проверки",
+    "APPROVED": "Одобрен",
+    "COMPLETED": "Завершён",
+    "REJECTED": "Отклонён",
+    "CANCELLED": "Отменён",
+}
+
 
 def _fmt_date(iso: str | None) -> str:
     if not iso:
@@ -73,6 +81,7 @@ def _fmt_date(iso: str | None) -> str:
 class ApiClient:
     def __init__(self):
         self._session = requests.Session()
+        self._session.trust_env = False  # ignore system proxy settings
         self._lock = RLock()
         self._cache: dict[tuple, object] = {}
 
@@ -220,8 +229,17 @@ class ApiClient:
         return self._create_payment(recipient_id, payload.get("amount", 0), payload.get("purpose", ""))
 
     def send_payment_by_email(self, payload: dict) -> dict:
-        recipient = self.resolve_recipient_by_email(str(payload.get("recipient_email", "")))
-        return self._create_payment(recipient["id"], payload.get("amount", 0), payload.get("purpose", ""))
+        email = str(payload.get("recipient_email", "")).strip().lower()
+        if not email:
+            raise RuntimeError("Укажите email получателя.")
+        amount_kopecks = int(float(payload.get("amount", 0)) * 100)
+        resp = self._post("/api/payments/by-email", {
+            "recipient_email": email,
+            "amount": amount_kopecks,
+            "description": payload.get("purpose", ""),
+            "payment_type": "SINGLE",
+        })
+        return {"id": str(resp.get("id", "N/A")), "status": resp.get("status", "")}
 
     def resolve_recipient_by_email(self, email: str) -> dict:
         needle = email.strip().lower()
@@ -350,6 +368,27 @@ class ApiClient:
     def unblock_user(self, user_id: int) -> dict:
         return self._put(f"/api/admin/users/{user_id}/unblock", {})
 
+    # --- User map (id -> full_name) ---
+
+    def get_user_map(self) -> dict[int, str]:
+        role = jwt_manager.get_role_key()
+        try:
+            if role == "ADMIN":
+                users = self._get("/api/admin/users")
+            elif role == "BANKER":
+                users = self._get("/api/banker/clients")
+            else:
+                return {}
+            return {u["id"]: u.get("full_name") or f"ID {u['id']}" for u in users if u.get("id")}
+        except Exception:
+            return {}
+
+    def update_user_limits(self, user_id: int, daily_limit: int, monthly_limit: int) -> dict:
+        return self._put(f"/api/admin/users/{user_id}/limits", {
+            "daily_limit": daily_limit,
+            "monthly_limit": monthly_limit,
+        })
+
     # --- Internal helpers ---
 
     def _normalize_payment(self, payment: dict) -> dict:
@@ -359,13 +398,18 @@ class ApiClient:
         if sender_id and sender_id == me_id:
             amount_rub = -amount_rub
 
+        recipient_id = payment.get("recipient_id")
+        recipient_label = f"Получатель #{recipient_id}" if recipient_id else "—"
+
         return {
             "id": str(payment.get("id", "")),
             "date": _fmt_date(payment.get("created_at")),
             "created_at": payment.get("created_at") or "",
-            "recipient": f"Получатель #{payment.get('recipient_id', '?')}",
+            "recipient": recipient_label,
+            "recipient_id": recipient_id,
             "amount": amount_rub,
             "status": STATUS_MAP.get(payment.get("status", ""), "processing"),
+            "rejection_reason": payment.get("rejection_reason") or "",
         }
 
 

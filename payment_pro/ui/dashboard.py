@@ -98,18 +98,20 @@ class Dashboard(QWidget):
 
         role = jwt_manager.get_role_key()
         if role == "CLIENT":
-            btn_pay = QPushButton("Новый платёж")
+            btn_pay = QPushButton("Новый платёж по счёту")
             btn_pay.setObjectName("btnNewPayment")
             btn_pay.setMinimumHeight(44)
+            btn_pay.setMinimumWidth(190)
             btn_pay.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_pay.clicked.connect(lambda: self.navigate.emit("payments"))
             btn_row.addWidget(btn_pay)
 
-            btn_transfer = QPushButton("Перевод")
+            btn_transfer = QPushButton("Перевод по email")
             btn_transfer.setObjectName("btnTransfer")
             btn_transfer.setMinimumHeight(44)
+            btn_transfer.setMinimumWidth(160)
             btn_transfer.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_transfer.clicked.connect(lambda: self.navigate.emit("payments"))
+            btn_transfer.clicked.connect(lambda: self.navigate.emit("payments_email"))
             btn_row.addWidget(btn_transfer)
         elif role == "BANKER":
             btn_queue = QPushButton("Очередь платежей")

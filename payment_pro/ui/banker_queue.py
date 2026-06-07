@@ -14,6 +14,7 @@ class BankerQueue(QWidget):
     def __init__(self):
         super().__init__()
         self._queue = []
+        self._client_map: dict = {}
         self._load_worker = None
         self._action_worker = None
         self._loading = False
@@ -51,7 +52,8 @@ class BankerQueue(QWidget):
 
         self.table = QTableWidget()
         self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["ID", "Отправитель", "Сумма", "Описание", "Fraud", "Действия"])
+        self.table.setHorizontalHeaderLabels(["ID", "Отправитель", "Сумма", "Описание", "Риск-балл", "Действия"])
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -77,6 +79,13 @@ class BankerQueue(QWidget):
 
     def _on_queue_loaded(self, queue: list):
         self._queue = queue
+        self._client_map = {}
+        try:
+            from api.client import api_client as _ac
+            clients = _ac.get_banker_clients()
+            self._client_map = {c["id"]: c.get("full_name", f"ID {c['id']}") for c in clients if c.get("id")}
+        except Exception:
+            pass
         self._render()
 
     def _on_load_finished(self):
@@ -92,9 +101,12 @@ class BankerQueue(QWidget):
             fraud = p.get("fraud_score", 0)
             fraud_color = "#EF4444" if fraud >= 70 else "#F59E0B" if fraud >= 40 else "#10B981"
 
+            sender_id = p.get("sender_id")
+            sender_name = self._client_map.get(sender_id, f"ID {sender_id}") if sender_id else "—"
+
             items = [
                 QTableWidgetItem(str(p.get("id", ""))),
-                QTableWidgetItem(f"ID {p.get('sender_id', '?')}"),
+                QTableWidgetItem(sender_name),
                 QTableWidgetItem(f"₽ {amount:,.2f}"),
                 QTableWidgetItem(p.get("description", "—")),
                 QTableWidgetItem(str(fraud)),

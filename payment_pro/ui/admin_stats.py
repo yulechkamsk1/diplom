@@ -78,7 +78,7 @@ class AdminStats(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels(
-            ["ID", "Банкир", "Email", "Одобрено", "Отклонено", "Всего", "Последнее решение", "История"]
+            ["ID", "Оператор", "Email", "Одобрено", "Отклонено", "Всего", "Последнее решение", "История"]
         )
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
@@ -182,49 +182,146 @@ class AdminStats(QWidget):
 
     def _show_banker_history(self, banker_id: int):
         self._history_worker = run_async(
-            lambda: api_client.get_admin_banker_history(banker_id),
-            on_success=lambda payments: self._open_banker_history(banker_id, payments),
+            lambda: {
+                "payments": api_client.get_admin_banker_history(banker_id),
+                "user_map": api_client.get_user_map(),
+            },
+            on_success=lambda data: self._open_banker_history(banker_id, data["payments"], data["user_map"]),
             on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
             on_finished=lambda: setattr(self, "_history_worker", None),
         )
 
-    def _open_banker_history(self, banker_id: int, payments: list):
+    def _open_banker_history(self, banker_id: int, payments: list, user_map: dict):
+        from api.client import PAYMENT_STATUS_RU
+        from PyQt6.QtGui import QColor
+
+        def name(uid):
+            if uid is None:
+                return "—"
+            return user_map.get(uid, f"ID {uid}")
+
+        def fraud_color(score):
+            if score >= 70:
+                return "#EF4444"
+            if score >= 40:
+                return "#F59E0B"
+            return "#10B981"
+
+        banker_name = user_map.get(banker_id, f"оператор #{banker_id}")
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"История банкира #{banker_id}")
-        dlg.resize(900, 520)
+        dlg.setWindowTitle(f"История оператора — {banker_name}")
+        dlg.resize(980, 560)
         layout = QVBoxLayout(dlg)
 
         tbl = QTableWidget()
         tbl.setColumnCount(8)
-        tbl.setHorizontalHeaderLabels(["ID", "Дата", "Отправитель", "Получатель", "Сумма", "Статус", "Fraud", "Обработан"])
-        tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        tbl.setHorizontalHeaderLabels(
+            ["ID", "Дата", "Отправитель", "Получатель", "Сумма", "Статус", "Риск-балл", "Обработан"]
+        )
+        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.setAlternatingRowColors(True)
         tbl.setShowGrid(False)
-        configure_table(tbl, stretch_columns=(1,), min_height=320)
+        configure_table(tbl, stretch_columns=(2, 3), min_height=320)
         tbl.setRowCount(len(payments))
         for row, p in enumerate(payments):
+            fraud = p.get("fraud_score") or 0
+            status_raw = p.get("status", "")
+
+            sender_btn = QPushButton(name(p.get("sender_id")))
+            sender_btn.setStyleSheet(
+                "QPushButton { border: none; background: transparent; color: #3B82F6; "
+                "text-align: left; padding: 2px 4px; }"
+                "QPushButton:hover { text-decoration: underline; }"
+            )
+            sender_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            sender_id = p.get("sender_id")
+            if sender_id:
+                sender_btn.clicked.connect(lambda _, uid=sender_id: self._open_client_profile(uid))
+
+            recip_btn = QPushButton(name(p.get("recipient_id")))
+            recip_btn.setStyleSheet(
+                "QPushButton { border: none; background: transparent; color: #3B82F6; "
+                "text-align: left; padding: 2px 4px; }"
+                "QPushButton:hover { text-decoration: underline; }"
+            )
+            recip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            recip_id = p.get("recipient_id")
+            if recip_id:
+                recip_btn.clicked.connect(lambda _, uid=recip_id: self._open_client_profile(uid))
+
             items = [
                 QTableWidgetItem(str(p.get("id", ""))),
                 QTableWidgetItem(_fmt_dt(p.get("created_at"))),
-                QTableWidgetItem(str(p.get("sender_id", "—"))),
-                QTableWidgetItem(str(p.get("recipient_id", "—"))),
+                None,
+                None,
                 QTableWidgetItem(_rub(p.get("amount", 0))),
-                QTableWidgetItem(p.get("status", "—")),
-                QTableWidgetItem(str(p.get("fraud_score", 0))),
+                QTableWidgetItem(PAYMENT_STATUS_RU.get(status_raw, status_raw or "—")),
+                QTableWidgetItem(str(fraud)),
                 QTableWidgetItem(_fmt_dt(p.get("processed_at"))),
             ]
             items[4].setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             items[6].setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            items[6].setForeground(QColor(fraud_color(fraud)))
             for col, item in enumerate(items):
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(row, col, item)
+                if item is not None:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    tbl.setItem(row, col, item)
+            tbl.setCellWidget(row, 2, sender_btn)
+            tbl.setCellWidget(row, 3, recip_btn)
             tbl.setRowHeight(row, 42)
-        for col in [0, 2, 3, 4, 5, 6, 7]:
+        for col in [0, 4, 5, 6, 7]:
             tbl.resizeColumnToContents(col)
 
         layout.addWidget(tbl)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+        dlg.exec()
+
+    def _open_client_profile(self, client_id: int):
+        self._history_worker = run_async(
+            lambda: api_client.get_admin_client_history(client_id),
+            on_success=lambda data: self._show_client_dialog(client_id, data),
+            on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
+            on_finished=lambda: setattr(self, "_history_worker", None),
+        )
+
+    def _show_client_dialog(self, client_id: int, data: dict):
+        from PyQt6.QtWidgets import QTabWidget, QDialogButtonBox
+        from api.client import PAYMENT_STATUS_RU
+        profile = data.get("profile", {})
+        user = profile.get("user", {})
+        name = user.get("full_name") or f"клиент #{client_id}"
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Профиль — {name}")
+        dlg.resize(820, 520)
+        layout = QVBoxLayout(dlg)
+
+        info = QWidget()
+        info_l = QVBoxLayout(info)
+        info_l.setContentsMargins(12, 12, 12, 12)
+        for label, value in [
+            ("ФИО", user.get("full_name", "—")),
+            ("Email", user.get("email", "—")),
+            ("Телефон", user.get("phone") or "—"),
+            ("Баланс", f"₽ {(user.get('balance', 0) or 0) / 100:,.2f}"),
+        ]:
+            row_w = QWidget()
+            row_l = QHBoxLayout(row_w)
+            row_l.setContentsMargins(0, 2, 0, 2)
+            lbl = QLabel(f"<b>{label}:</b>")
+            lbl.setFixedWidth(140)
+            row_l.addWidget(lbl)
+            row_l.addWidget(QLabel(str(value)))
+            row_l.addStretch()
+            info_l.addWidget(row_w)
+        info_l.addStretch()
+
+        layout.addWidget(info)
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btns.rejected.connect(dlg.reject)
         layout.addWidget(btns)

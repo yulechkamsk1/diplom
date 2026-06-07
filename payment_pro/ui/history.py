@@ -251,11 +251,17 @@ class History(QWidget):
         _, status_label = badge_style(txn["status"])
         amount = txn["amount"]
         amount_str = f"+₽ {amount:,.2f}" if amount > 0 else f"-₽ {abs(amount):,.2f}"
-        QMessageBox.information(
-            self, f"Транзакция {txn_id}",
-            f"ID: {txn['id']}\nДата: {txn['date']}\n"
-            f"Получатель: {txn['recipient']}\nСумма: {amount_str}\nСтатус: {status_label}",
+        details = (
+            f"ID: {txn['id']}\n"
+            f"Дата: {txn['date']}\n"
+            f"Получатель: {txn['recipient']}\n"
+            f"Сумма: {amount_str}\n"
+            f"Статус: {status_label}"
         )
+        reason = txn.get("rejection_reason", "")
+        if reason:
+            details += f"\nПричина отклонения: {reason}"
+        QMessageBox.information(self, f"Транзакция {txn_id}", details)
 
     def _export_csv(self):
         path, _ = QFileDialog.getSaveFileName(

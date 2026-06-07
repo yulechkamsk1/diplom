@@ -180,15 +180,16 @@ class BankerClients(QWidget):
         stats = profile.get("stats", {})
         payments = profile.get("payments", [])
 
+        name = client.get("full_name") or f"клиент #{client_id}"
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"Клиент #{client_id}")
-        dlg.resize(820, 560)
+        dlg.setWindowTitle(f"Клиент — {name}")
+        dlg.resize(860, 580)
         layout = QVBoxLayout(dlg)
         layout.setSpacing(12)
 
         tabs = QTabWidget()
         tabs.addTab(self._profile_tab(client, stats), "Профиль")
-        tabs.addTab(self._payments_tab(payments), "Платежи")
+        tabs.addTab(self._payments_tab(payments, client_id), "Платежи")
         layout.addWidget(tabs)
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -206,8 +207,6 @@ class BankerClients(QWidget):
         balance = client.get("balance", 0)
         daily = client.get("daily_limit", 0)
         monthly = client.get("monthly_limit", 0)
-        is_blocked = client.get("is_blocked", False)
-
         info_lines = [
             ("ID", user_id or "—"),
             ("Счёт", user_id_to_account_number(user_id) if user_id != "" else "—"),
@@ -217,7 +216,6 @@ class BankerClients(QWidget):
             ("Баланс", _rub(balance)),
             ("Дневной лимит", _rub(daily)),
             ("Месячный лимит", _rub(monthly)),
-            ("Статус", "Заблокирован" if is_blocked else "Активен"),
         ]
         for label, value in info_lines:
             layout.addWidget(self._info_row(label, str(value)))
@@ -242,41 +240,68 @@ class BankerClients(QWidget):
         layout.addStretch()
         return tab
 
-    def _payments_tab(self, payments: list) -> QWidget:
+    def _payments_tab(self, payments: list, client_id: int | None = None) -> QWidget:
+        from api.client import PAYMENT_STATUS_RU
+        from PyQt6.QtGui import QColor
+
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(12, 12, 12, 12)
 
+        client_map = {c["id"]: c.get("full_name", f"ID {c['id']}") for c in self._clients if c.get("id")}
+
+        def name(uid):
+            if uid is None:
+                return "—"
+            return client_map.get(uid, f"ID {uid}")
+
+        def fraud_color(score):
+            if score >= 70:
+                return "#EF4444"
+            if score >= 40:
+                return "#F59E0B"
+            return "#10B981"
+
         tbl = QTableWidget()
-        tbl.setColumnCount(7)
-        tbl.setHorizontalHeaderLabels(["ID", "Дата", "Отправитель", "Получатель", "Сумма", "Статус", "Fraud"])
-        tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        tbl.setColumnCount(8)
+        tbl.setHorizontalHeaderLabels(
+            ["ID", "Дата", "Отправитель", "Получатель", "Сумма", "Статус", "Риск-балл", "Комментарий"]
+        )
+        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        tbl.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.setAlternatingRowColors(True)
         tbl.setShowGrid(False)
-        configure_table(tbl, stretch_columns=(1,), min_height=260)
+        configure_table(tbl, stretch_columns=(2, 3, 7), min_height=260)
         tbl.setRowCount(len(payments))
 
         for i, p in enumerate(payments):
             amount = p.get("amount", 0)
+            fraud = p.get("fraud_score") or 0
+            status_raw = p.get("status", "")
+            comment = p.get("rejection_reason") or "—"
+
             items = [
                 QTableWidgetItem(str(p.get("id", ""))),
                 QTableWidgetItem(_fmt_date(p.get("created_at"))),
-                QTableWidgetItem(str(p.get("sender_id", "—"))),
-                QTableWidgetItem(str(p.get("recipient_id", "—"))),
+                QTableWidgetItem(name(p.get("sender_id"))),
+                QTableWidgetItem(name(p.get("recipient_id"))),
                 QTableWidgetItem(_rub(amount)),
-                QTableWidgetItem(p.get("status", "—")),
-                QTableWidgetItem(str(p.get("fraud_score", 0))),
+                QTableWidgetItem(PAYMENT_STATUS_RU.get(status_raw, status_raw or "—")),
+                QTableWidgetItem(str(fraud)),
+                QTableWidgetItem(comment),
             ]
             items[4].setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             items[6].setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            items[6].setForeground(QColor(fraud_color(fraud)))
             for col, item in enumerate(items):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 tbl.setItem(i, col, item)
             tbl.setRowHeight(i, 42)
 
-        for col in [0, 2, 3, 4, 5, 6]:
+        for col in [0, 4, 5, 6]:
             tbl.resizeColumnToContents(col)
         layout.addWidget(tbl)
         return tab

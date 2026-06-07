@@ -11,7 +11,13 @@ from api.client import api_client, user_id_to_account_number
 from ui.async_utils import run_async
 from ui.responsive import configure_table
 
-ROLE_LABELS = {"CLIENT": "Клиент", "BANKER": "Банкир", "ADMIN": "Администратор"}
+ROLE_LABELS = {"CLIENT": "Клиент", "BANKER": "Оператор", "ADMIN": "Администратор"}
+
+
+def _mask_account(number: str) -> str:
+    if len(number) < 8:
+        return number
+    return number[:4] + "••••••••••" + number[-4:]
 
 
 def _rub(kopecks: int | float | None) -> str:
@@ -26,6 +32,50 @@ def _fmt_dt(iso: str | None) -> str:
         return dt.strftime("%d.%m.%Y %H:%M")
     except Exception:
         return iso[:16]
+
+
+class EditLimitsDialog(QDialog):
+    def __init__(self, user: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Изменить лимиты — {user.get('full_name', '')}")
+        self.setMinimumWidth(380)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        self.daily_spin = QDoubleSpinBox()
+        self.daily_spin.setRange(0, 1_000_000_000)
+        self.daily_spin.setDecimals(2)
+        self.daily_spin.setSingleStep(1000)
+        self.daily_spin.setPrefix("₽ ")
+        self.daily_spin.setValue((user.get("daily_limit") or 0) / 100)
+        self.daily_spin.setMinimumHeight(38)
+
+        self.monthly_spin = QDoubleSpinBox()
+        self.monthly_spin.setRange(0, 1_000_000_000)
+        self.monthly_spin.setDecimals(2)
+        self.monthly_spin.setSingleStep(10000)
+        self.monthly_spin.setPrefix("₽ ")
+        self.monthly_spin.setValue((user.get("monthly_limit") or 0) / 100)
+        self.monthly_spin.setMinimumHeight(38)
+
+        form.addRow("Дневной лимит:", self.daily_spin)
+        form.addRow("Месячный лимит:", self.monthly_spin)
+        layout.addLayout(form)
+
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+
+    def daily_kopecks(self) -> int:
+        return int(round(self.daily_spin.value() * 100))
+
+    def monthly_kopecks(self) -> int:
+        return int(round(self.monthly_spin.value() * 100))
 
 
 class CreateUserDialog(QDialog):
@@ -170,9 +220,9 @@ class AdminUsers(QWidget):
         card_layout.setContentsMargins(20, 16, 20, 16)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(10)
+        self.table.setColumnCount(11)
         self.table.setHorizontalHeaderLabels(
-            ["ID", "Счёт", "ФИО", "Email", "Роль", "Баланс", "Лимит/день", "Статус", "История", "Действия"]
+            ["ID", "Счёт", "ФИО", "Email", "Роль", "Баланс", "Лимит/день", "Статус", "История", "Лимиты", "Действия"]
         )
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
@@ -222,9 +272,10 @@ class AdminUsers(QWidget):
             role_raw = u.get("role", "")
             user_id = u.get("id", "")
 
+            raw_account = user_id_to_account_number(user_id) if user_id != "" else "—"
             items = [
                 QTableWidgetItem(str(user_id)),
-                QTableWidgetItem(user_id_to_account_number(user_id) if user_id != "" else "—"),
+                QTableWidgetItem(_mask_account(raw_account)),
                 QTableWidgetItem(u.get("full_name", "—")),
                 QTableWidgetItem(u.get("email", "—")),
                 QTableWidgetItem(ROLE_LABELS.get(role_raw, role_raw or "—")),
@@ -254,6 +305,16 @@ class AdminUsers(QWidget):
             hist_btn.clicked.connect(lambda _, uid=user_id, role=role_raw: self._show_history(uid, role))
             self.table.setCellWidget(row, 8, hist_btn)
 
+            limits_btn = QPushButton("Изменить")
+            limits_btn.setStyleSheet(
+                "QPushButton { border: 1px solid #E2E8F0; border-radius: 6px; "
+                "padding: 4px 10px; font-size: 12px; color: #8B5CF6; background: #F5F3FF; }"
+                "QPushButton:hover { background: #EDE9FE; }"
+            )
+            limits_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            limits_btn.clicked.connect(lambda _, user=u: self._edit_limits(user))
+            self.table.setCellWidget(row, 9, limits_btn)
+
             action_btn = QPushButton("Разблокировать" if is_blocked else "Заблокировать")
             action_btn.setStyleSheet(
                 "QPushButton { border-radius: 6px; padding: 4px 10px; font-size: 12px; "
@@ -267,10 +328,10 @@ class AdminUsers(QWidget):
             action_btn.clicked.connect(
                 lambda _, uid=user_id, blocked=is_blocked: self._toggle_block(uid, blocked)
             )
-            self.table.setCellWidget(row, 9, action_btn)
+            self.table.setCellWidget(row, 10, action_btn)
             self.table.setRowHeight(row, 48)
 
-        for col in [0, 1, 4, 6, 7, 8, 9]:
+        for col in [0, 1, 4, 6, 7, 8, 9, 10]:
             self.table.resizeColumnToContents(col)
 
     def _create_user(self):
@@ -306,6 +367,23 @@ class AdminUsers(QWidget):
             on_finished=lambda: setattr(self, "_action_worker", None),
         )
 
+    def _edit_limits(self, user: dict):
+        dlg = EditLimitsDialog(user, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        user_id = user.get("id")
+        daily = dlg.daily_kopecks()
+        monthly = dlg.monthly_kopecks()
+        self._action_worker = run_async(
+            lambda: api_client.update_user_limits(user_id, daily, monthly),
+            on_success=lambda _: (
+                QMessageBox.information(self, "Готово", "Лимиты обновлены."),
+                self._load_data(),
+            ),
+            on_error=lambda msg: QMessageBox.critical(self, "Ошибка", msg),
+            on_finished=lambda: setattr(self, "_action_worker", None),
+        )
+
     def _show_history(self, user_id: int, role: str):
         if role == "CLIENT":
             self._action_worker = run_async(
@@ -323,11 +401,14 @@ class AdminUsers(QWidget):
             )
 
     def _show_banker_history(self, payments: list, banker_id: int):
+        banker = next((u for u in self._users if u.get("id") == banker_id), {})
+        name = banker.get("full_name") or f"оператор #{banker_id}"
+        user_map = {u["id"]: u.get("full_name", f"ID {u['id']}") for u in self._users if u.get("id")}
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"История банкира #{banker_id}")
-        dlg.resize(900, 520)
+        dlg.setWindowTitle(f"История оператора — {name}")
+        dlg.resize(960, 560)
         layout = QVBoxLayout(dlg)
-        layout.addWidget(self._payments_table(payments))
+        layout.addWidget(self._payments_table(payments, user_map))
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btns.rejected.connect(dlg.reject)
         layout.addWidget(btns)
@@ -340,14 +421,17 @@ class AdminUsers(QWidget):
         payments = profile.get("payments", [])
         audit = data.get("audit", [])
 
+        name = user.get("full_name") or f"клиент #{client_id}"
+        user_map = {u["id"]: u.get("full_name", f"ID {u['id']}") for u in self._users if u.get("id")}
+
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"История клиента #{client_id}")
+        dlg.setWindowTitle(f"Профиль клиента — {name}")
         dlg.resize(940, 620)
         layout = QVBoxLayout(dlg)
 
         tabs = QTabWidget()
         tabs.addTab(self._client_profile_tab(user, stats), "Профиль")
-        tabs.addTab(self._payments_table(payments), "Платежи")
+        tabs.addTab(self._payments_table(payments, user_map), "Платежи")
         tabs.addTab(self._audit_table(audit), "Аудит")
         layout.addWidget(tabs)
 
@@ -372,7 +456,6 @@ class AdminUsers(QWidget):
             ("Баланс", _rub(user.get("balance", 0))),
             ("Дневной лимит", _rub(user.get("daily_limit", 0))),
             ("Месячный лимит", _rub(user.get("monthly_limit", 0))),
-            ("Статус", "Заблокирован" if user.get("is_blocked") else "Активен"),
             ("Отправлено платежей", stats.get("sent_count", 0)),
             ("Получено платежей", stats.get("received_count", 0)),
             ("Сумма отправленных", _rub(stats.get("sent_amount", 0))),
@@ -386,35 +469,57 @@ class AdminUsers(QWidget):
         layout.addStretch()
         return tab
 
-    def _payments_table(self, payments: list) -> QTableWidget:
+    def _payments_table(self, payments: list, user_map: dict | None = None) -> QTableWidget:
+        from api.client import PAYMENT_STATUS_RU
+        from PyQt6.QtGui import QColor
+        umap = user_map or {}
+
+        def name(uid):
+            if uid is None:
+                return "—"
+            return umap.get(uid, f"ID {uid}")
+
+        def fraud_color(score):
+            if score >= 70:
+                return "#EF4444"
+            if score >= 40:
+                return "#F59E0B"
+            return "#10B981"
+
         tbl = QTableWidget()
         tbl.setColumnCount(8)
-        tbl.setHorizontalHeaderLabels(["ID", "Дата", "Отправитель", "Получатель", "Сумма", "Статус", "Fraud", "Обработан"])
-        tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        tbl.setHorizontalHeaderLabels(
+            ["ID", "Дата", "Отправитель", "Получатель", "Сумма", "Статус", "Риск-балл", "Обработан"]
+        )
+        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.setAlternatingRowColors(True)
         tbl.setShowGrid(False)
-        configure_table(tbl, stretch_columns=(1,), min_height=320)
+        configure_table(tbl, stretch_columns=(2, 3), min_height=320)
         tbl.setRowCount(len(payments))
         for row, p in enumerate(payments):
+            fraud = p.get("fraud_score") or 0
+            status_raw = p.get("status", "")
             items = [
                 QTableWidgetItem(str(p.get("id", ""))),
                 QTableWidgetItem(_fmt_dt(p.get("created_at"))),
-                QTableWidgetItem(str(p.get("sender_id", "—"))),
-                QTableWidgetItem(str(p.get("recipient_id", "—"))),
+                QTableWidgetItem(name(p.get("sender_id"))),
+                QTableWidgetItem(name(p.get("recipient_id"))),
                 QTableWidgetItem(_rub(p.get("amount", 0))),
-                QTableWidgetItem(p.get("status", "—")),
-                QTableWidgetItem(str(p.get("fraud_score", 0))),
+                QTableWidgetItem(PAYMENT_STATUS_RU.get(status_raw, status_raw or "—")),
+                QTableWidgetItem(str(fraud)),
                 QTableWidgetItem(_fmt_dt(p.get("processed_at"))),
             ]
             items[4].setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             items[6].setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            items[6].setForeground(QColor(fraud_color(fraud)))
             for col, item in enumerate(items):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 tbl.setItem(row, col, item)
             tbl.setRowHeight(row, 42)
-        for col in [0, 2, 3, 4, 5, 6, 7]:
+        for col in [0, 4, 5, 6, 7]:
             tbl.resizeColumnToContents(col)
         return tbl
 

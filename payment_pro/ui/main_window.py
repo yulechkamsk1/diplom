@@ -31,7 +31,7 @@ NAV_CLIENT = [
 
 NAV_BANKER = [
     ("dashboard", "Главная"),
-    ("queue",     "Очередь"),
+    ("queue",     "Очередь платежей"),
     ("clients",   "Клиенты"),
     ("history",   "История"),
     ("analytics", "Аналитика"),
@@ -294,16 +294,24 @@ class MainWindow(QMainWindow):
         return widget
 
     def _navigate(self, page_id: str):
-        widget = self._get_or_create_page(page_id)
+        switch_email_tab = page_id == "payments_email"
+        actual_id = "payments" if switch_email_tab else page_id
+
+        widget = self._get_or_create_page(actual_id)
         if widget is None:
             return
 
+        if switch_email_tab and hasattr(widget, "switch_to_email_tab"):
+            widget.switch_to_email_tab()
+        elif page_id == "payments" and hasattr(widget, "switch_to_account_tab"):
+            widget.switch_to_account_tab()
+
         for pid, btn in self._nav_buttons.items():
-            btn.setProperty("active", pid == page_id)
+            btn.setProperty("active", pid == actual_id)
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
-        title, subtitle = PAGE_META.get(page_id, (page_id.capitalize(), ""))
+        title, subtitle = PAGE_META.get(actual_id, (actual_id.capitalize(), ""))
         self.page_title.setText(title)
         self.page_subtitle.setText(subtitle)
 
