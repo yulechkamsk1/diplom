@@ -85,8 +85,6 @@ class BankerClients(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels(["ID", "Счёт", "ФИО", "Email", "Телефон", "Баланс", "Статус", ""])
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -267,9 +265,6 @@ class BankerClients(QWidget):
         tbl.setHorizontalHeaderLabels(
             ["ID", "Дата", "Отправитель", "Получатель", "Сумма", "Статус", "Риск-балл", "Комментарий"]
         )
-        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        tbl.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.setAlternatingRowColors(True)

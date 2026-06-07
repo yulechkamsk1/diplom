@@ -80,8 +80,6 @@ class AdminStats(QWidget):
         self.table.setHorizontalHeaderLabels(
             ["ID", "Оператор", "Email", "Одобрено", "Отклонено", "Всего", "Последнее решение", "История"]
         )
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -218,8 +216,6 @@ class AdminStats(QWidget):
         tbl.setHorizontalHeaderLabels(
             ["ID", "Дата", "Отправитель", "Получатель", "Сумма", "Статус", "Риск-балл", "Обработан"]
         )
-        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.setAlternatingRowColors(True)

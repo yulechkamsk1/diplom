@@ -224,8 +224,6 @@ class AdminUsers(QWidget):
         self.table.setHorizontalHeaderLabels(
             ["ID", "Счёт", "ФИО", "Email", "Роль", "Баланс", "Лимит/день", "Статус", "История", "Лимиты", "Действия"]
         )
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -491,8 +489,6 @@ class AdminUsers(QWidget):
         tbl.setHorizontalHeaderLabels(
             ["ID", "Дата", "Отправитель", "Получатель", "Сумма", "Статус", "Риск-балл", "Обработан"]
         )
-        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.setAlternatingRowColors(True)
@@ -527,7 +523,6 @@ class AdminUsers(QWidget):
         tbl = QTableWidget()
         tbl.setColumnCount(5)
         tbl.setHorizontalHeaderLabels(["ID", "Действие", "Объект", "Детали", "Дата"])
-        tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.setAlternatingRowColors(True)

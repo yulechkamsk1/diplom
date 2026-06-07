@@ -124,7 +124,6 @@ class History(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(_COL_LABELS)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setCursor(Qt.CursorShape.PointingHandCursor)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         self.table.verticalHeader().setVisible(False)
