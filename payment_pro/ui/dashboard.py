@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 from api.client import api_client
+from ui.history import _short_name
 from auth.jwt_manager import jwt_manager
 from ui.async_utils import run_async
 from ui.responsive import ResponsiveGrid, configure_table
@@ -252,7 +253,7 @@ class Dashboard(QWidget):
             amount_color = "#10B981" if amount > 0 else "#EF4444"
 
             date_item = QTableWidgetItem(txn["date"])
-            recip_item = QTableWidgetItem(txn["recipient"])
+            recip_item = QTableWidgetItem(_short_name(txn["recipient"]))
             amount_item = QTableWidgetItem(amount_str)
             amount_item.setForeground(QColor(amount_color))
             amount_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)

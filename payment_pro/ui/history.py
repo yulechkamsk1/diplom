@@ -12,6 +12,13 @@ from ui.async_utils import run_async
 from ui.responsive import configure_table
 from ui.styles import badge_style
 
+def _short_name(full: str) -> str:
+    parts = full.strip().split()
+    if len(parts) >= 2:
+        return f"{parts[0]}.{parts[1][0].upper()}"
+    return full
+
+
 _SORT_KEYS = {
     0: lambda t: int(t["id"]) if t["id"].isdigit() else 0,
     1: lambda t: t["created_at"],
@@ -213,7 +220,7 @@ class History(QWidget):
             items = [
                 QTableWidgetItem(txn["id"]),
                 QTableWidgetItem(txn["date"]),
-                QTableWidgetItem(txn["recipient"]),
+                QTableWidgetItem(_short_name(txn["recipient"])),
                 QTableWidgetItem(amount_str),
                 QTableWidgetItem(status_label),
             ]

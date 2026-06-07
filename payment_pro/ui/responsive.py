@@ -21,19 +21,11 @@ def configure_table(table: QTableWidget, stretch_columns: tuple[int, ...] = (), 
 
     header = table.horizontalHeader()
     header.setStretchLastSection(False)
-    header.setMinimumSectionSize(60)
-    header.setDefaultSectionSize(130)
-    header.setSectionsMovable(True)
-    col_count = table.columnCount()
-    for col in range(col_count):
-        header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
-    # Последняя колонка растягивается — таблица выглядит аккуратно когда данных мало
-    if col_count > 0:
-        header.setSectionResizeMode(col_count - 1, QHeaderView.ResizeMode.Stretch)
-    # Указанные колонки получают увеличенный стартовый размер
+    header.setMinimumSectionSize(70)
+    for col in range(table.columnCount()):
+        header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
     for col in stretch_columns:
-        if col < col_count - 1:
-            header.resizeSection(col, 180)
+        header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
 
 
 class ResponsiveGrid(QWidget):
