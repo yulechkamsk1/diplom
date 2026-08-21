@@ -28,3 +28,4 @@ Thumbs.db
 
 # Node (если не нужен)
 node_modules/
+credentials.txt
